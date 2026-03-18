@@ -1,15 +1,33 @@
+export type SubFeature = {
+  id: string
+  name: string
+  desc: string
+  price: number
+  isDefaultEnabled?: boolean
+}
+
+export type AddOn = {
+  id: string
+  name: string
+  desc: string
+  price: number
+  pricingPeriod: string
+}
+
 export type ModuleItem = {
   id: string
   name: string
   desc: string
   price: number
   per?: "user" | "gb" | "asset"
+  subFeatures?: SubFeature[]  // Support for sub-features
 }
 
 export type Module = {
   id: string
   name: string
   items: ModuleItem[]
+  addons?: AddOn[]  // Add-ons for this module
 }
 
 export const ASSET_STEPS = [20, 100, 200, 255]

@@ -1,25 +1,26 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useMemo } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Check } from "lucide-react"
-import { addOns } from "@/lib/pricing-data"
-import type { AddOn } from "@/lib/pricing-data"
+import type { Module, AddOn } from "@/lib/customize-data"
 
 function AddOnCard({
   addOn,
   isAnnual,
   isSelected,
   onToggle,
+  formatPrice,
 }: {
   addOn: AddOn
   isAnnual: boolean
   isSelected: boolean
   onToggle: () => void
+  formatPrice: (val: number) => string
 }) {
-  const price = isAnnual ? addOn.annualPrice : addOn.monthlyPrice
+  const price = isAnnual ? addOn.price * 12 * 0.8 : addOn.price
 
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-6 transition-all duration-300 hover:border-primary/30 hover:bg-primary/[0.02]">
@@ -28,31 +29,20 @@ function AddOnCard({
         <Switch checked={isSelected} onCheckedChange={onToggle} />
       </div>
 
-      <p className="text-sm leading-relaxed text-muted-foreground mb-5 flex-1">
-        {addOn.description}
-      </p>
-
-      <ul className="flex flex-wrap gap-2 mb-5">
-        {addOn.features.map((feature) => (
-          <li
-            key={feature}
-            className="flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground"
-          >
-            <Check className="h-3 w-3 text-primary" />
-            {feature}
-          </li>
-        ))}
-      </ul>
+      <div 
+        className="text-sm leading-relaxed text-muted-foreground mb-5 flex-1 prose prose-sm max-w-none"
+        dangerouslySetInnerHTML={{ __html: addOn.desc }}
+      />
 
       <div className="flex items-end justify-between pt-4 border-t border-border">
         <div>
-          <p className="text-xs text-muted-foreground">Starting from</p>
+          <p className="text-xs text-muted-foreground">Price</p>
           <div className="flex items-baseline gap-0.5">
             <span className="text-2xl font-bold text-foreground">
-              ${price % 1 === 0 ? price : price.toFixed(2)}
+              {formatPrice(price)}
             </span>
             <span className="text-xs text-muted-foreground">
-              /{addOn.per}/mo
+              /{isAnnual ? 'year' : 'month'}
             </span>
           </div>
         </div>
@@ -64,33 +54,41 @@ function AddOnCard({
   )
 }
 
-export function AddOnsSection({ isAnnual, activeModules }: { isAnnual: boolean; activeModules: Record<string, boolean> }) {
-  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, boolean>>({})
-
-  const toggleAddOn = (id: string) => {
-    setSelectedAddOns(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }))
-  }
-
-  // Group add-ons by module and filter by active modules
+export function AddOnsSection({ 
+  isAnnual, 
+  activeModules, 
+  modules,
+  selectedAddOns,
+  onToggleAddOn,
+  formatPrice
+}: { 
+  isAnnual: boolean
+  activeModules: Record<string, boolean>
+  modules: Module[]
+  selectedAddOns: Record<string, boolean>
+  onToggleAddOn: (addonId: string) => void
+  formatPrice: (val: number) => string
+}) {
+  // Group add-ons by module from dynamic modules data
   const addOnsByModule = useMemo(() => {
-    const modules = ["HR & Payroll", "Project Management", "Asset Management", "E-office"] as const
-    return modules.reduce((acc, module) => {
-      // Only include module if it's active
-      if (activeModules[module]) {
-        acc[module] = addOns.filter(addOn => addOn.module === module)
+    const result: Record<string, AddOn[]> = {}
+    modules.forEach(module => {
+      if (activeModules[module.id] && module.addons && module.addons.length > 0) {
+        result[module.id] = module.addons
       }
-      return acc
-    }, {} as Record<string, AddOn[]>)
-  }, [activeModules])
+    })
+    return result
+  }, [modules, activeModules])
 
   // Get first active module for default tab
   const firstActiveModule = useMemo(() => {
-    const modules = ["HR & Payroll", "Project Management", "Asset Management", "E-office"] as const
-    return modules.find(module => activeModules[module]) || "HR & Payroll"
-  }, [activeModules])
+    return modules.find(module => activeModules[module.id] && module.addons && module.addons.length > 0)?.id || ""
+  }, [modules, activeModules])
+
+  // If no add-ons available, don't render
+  if (Object.keys(addOnsByModule).length === 0) {
+    return null
+  }
 
   return (
     <section className="mx-auto max-w-7xl px-4 py-16">
@@ -105,30 +103,19 @@ export function AddOnsSection({ isAnnual, activeModules }: { isAnnual: boolean; 
 
       <Tabs defaultValue={firstActiveModule} className="w-full">
         <TabsList className={`grid w-full mb-8 h-auto p-1 bg-muted/50`} style={{ gridTemplateColumns: `repeat(${Object.keys(addOnsByModule).length}, 1fr)` }}>
-          {activeModules["HR & Payroll"] && (
-            <TabsTrigger value="HR & Payroll" className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              HR & Payroll
+          {Object.keys(addOnsByModule).map(moduleId => (
+            <TabsTrigger 
+              key={moduleId}
+              value={moduleId} 
+              className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+            >
+              {moduleId}
             </TabsTrigger>
-          )}
-          {activeModules["Project Management"] && (
-            <TabsTrigger value="Project Management" className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              Project Management
-            </TabsTrigger>
-          )}
-          {activeModules["Asset Management"] && (
-            <TabsTrigger value="Asset Management" className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              Asset Management
-            </TabsTrigger>
-          )}
-          {activeModules["E-office"] && (
-            <TabsTrigger value="E-office" className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              E-office
-            </TabsTrigger>
-          )}
+          ))}
         </TabsList>
 
-        {Object.entries(addOnsByModule).map(([module, moduleAddOns]) => (
-          <TabsContent key={module} value={module} className="mt-6">
+        {Object.entries(addOnsByModule).map(([moduleId, moduleAddOns]) => (
+          <TabsContent key={moduleId} value={moduleId} className="mt-6">
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {moduleAddOns.map((addOn) => (
                 <AddOnCard 
@@ -136,7 +123,8 @@ export function AddOnsSection({ isAnnual, activeModules }: { isAnnual: boolean; 
                   addOn={addOn} 
                   isAnnual={isAnnual}
                   isSelected={!!selectedAddOns[addOn.id]}
-                  onToggle={() => toggleAddOn(addOn.id)}
+                  onToggle={() => onToggleAddOn(addOn.id)}
+                  formatPrice={formatPrice}
                 />
               ))}
             </div>

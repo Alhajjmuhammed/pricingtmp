@@ -10,23 +10,33 @@ import {
   X,
   Receipt,
   Info,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import {
-  modules,
+  modules as fallbackModules,
   UNIT_PRICES,
   CURRENCIES,
   TRANSLATIONS,
   DEFAULT_COUNTS,
   type LangKey,
   type Counts,
+  type Module,
+  type ModuleItem,
 } from "@/lib/customize-data"
 import { CustomizeSidebar } from "@/components/customize/customize-sidebar"
 import { ModuleCard } from "@/components/customize/module-card"
 import { InvoiceSummary } from "@/components/customize/invoice-summary"
 import { ThemeToggleFloating } from "@/components/theme-toggle"
 import { AddOnsSection } from "@/components/add-ons-section"
+import { 
+  graphqlRequest, 
+  GET_SERVICE_CATEGORIES,
+  type ServiceCategory 
+} from "@/lib/graphql-client"
 
 export default function CustomizePlanPage() {
   const [lang, setLang] = useState<LangKey>("en")
@@ -36,26 +46,122 @@ export default function CustomizePlanPage() {
   const [showAddOns, setShowAddOns] = useState(false)
   const addOnsRef = useRef<HTMLDivElement>(null)
   const [activeModules, setActiveModules] = useState<Record<string, boolean>>({
-    "HR & Payroll": true,
-    "Project Management": true,
-    "Asset Management": true,
-    "E-office": true,
+    "HR & Payroll": false,
+    "Project Management": false,
+    "Asset Management": false,
+    "E-office": false,
   })
   const [selectedItems, setSelectedItems] = useState<Record<string, boolean>>({})
+  const [selectedSubFeatures, setSelectedSubFeatures] = useState<Record<string, boolean>>({})
+  const [expandedFeatures, setExpandedFeatures] = useState<Record<string, boolean>>({})
+  const [selectedAddOns, setSelectedAddOns] = useState<Record<string, boolean>>({})
   const [counts, setCounts] = useState<Counts>(DEFAULT_COUNTS)
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const VAT_RATE = 0.18
 
+  // Dynamic data states
+  const [modules, setModules] = useState<Module[]>(fallbackModules)
+  const [isLoadingModules, setIsLoadingModules] = useState(true)
+  const [modulesError, setModulesError] = useState<string | null>(null)
+  const [isUsingFallback, setIsUsingFallback] = useState(false)
+
   const t = TRANSLATIONS[lang]
   const cur = CURRENCIES[currency]
 
-  // Initialize all items as selected
+  // Fetch dynamic data from backend
+  const fetchServicesData = async () => {
+    try {
+      setIsLoadingModules(true)
+      setModulesError(null)
+      setIsUsingFallback(false)
+
+      const data = await graphqlRequest<{ serviceCategories: ServiceCategory[] }>(
+        GET_SERVICE_CATEGORIES
+      )
+
+      // Transform backend data to Module format
+      const transformedModules: Module[] = data.serviceCategories
+        .filter(service => service.isActive)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map(service => ({
+          id: service.name, // Use name as ID for activeModules compatibility
+          name: service.name,
+          items: (service.features || [])
+            .filter(f => f.isActive)
+            .map(feature => {
+              // Determine pricing unit
+              let per: "user" | "gb" | "asset" | undefined = undefined
+              if (feature.pricingUnit === 'per_user') per = 'user'
+              else if (feature.pricingUnit === 'per_gb') per = 'gb'
+              else if (feature.pricingUnit === 'per_asset') per = 'asset'
+
+              return {
+                id: feature.slug,
+                name: feature.name,
+                desc: feature.description,
+                price: Number(feature.price) || 0,
+                per,
+                subFeatures: (feature.subFeatures || []).map(sf => ({
+                  id: sf.slug,
+                  name: sf.name,
+                  desc: sf.description,
+                  price: Number(sf.price) || 0,
+                  isDefaultEnabled: sf.isDefaultEnabled,
+                })),
+              }
+            }),
+          addons: (service.addons || []).map(addon => ({
+            id: addon.slug,
+            name: addon.name,
+            desc: addon.description,
+            price: Number(addon.price) || 0,
+            pricingPeriod: addon.pricingPeriod || 'monthly',
+          })),
+        }))
+
+      if (transformedModules.length === 0) {
+        console.warn('No services found in backend, using fallback data')
+        setModules(fallbackModules)
+        setIsUsingFallback(true)
+      } else {
+        setModules(transformedModules)
+        
+        // Update activeModules state with new module names
+        const newActiveModules: Record<string, boolean> = {}
+        transformedModules.forEach(mod => {
+          newActiveModules[mod.id] = false
+        })
+        setActiveModules(newActiveModules)
+      }
+    } catch (error) {
+      console.error('Failed to fetch services:', error)
+      setModulesError(error instanceof Error ? error.message : 'Failed to load services')
+      setIsUsingFallback(true)
+      setModules(fallbackModules)
+    } finally {
+      setIsLoadingModules(false)
+    }
+  }
+
+  // Fetch data on mount
+  useEffect(() => {
+    fetchServicesData()
+  }, [])
+
+  // Initialize items as NOT selected by default
   useEffect(() => {
     const initial: Record<string, boolean> = {}
-    modules.forEach((m) => m.items.forEach((i) => (initial[i.id] = true)))
+    const initialSubFeatures: Record<string, boolean> = {}
+    modules.forEach((m) => {
+      m.items.forEach((i) => {
+        initial[i.id] = false  // Start with all features unselected
+        // Don't auto-select sub-features either
+      })
+    })
     setSelectedItems(initial)
-  }, [])
+    setSelectedSubFeatures(initialSubFeatures)
+  }, [modules])
 
   const formatPrice = useCallback(
     (val: number) => {
@@ -70,22 +176,50 @@ export default function CustomizePlanPage() {
     modules.forEach((mod) => {
       if (activeModules[mod.id]) {
         mod.items.forEach((item) => {
-          if (selectedItems[item.id] && item.price > 0) {
-            const base = item.price
-            if (item.per === "gb") monthlyTotal += base * counts.storage
-            else if (item.per === "asset") monthlyTotal += base * counts.asset
-            else monthlyTotal += base * counts.users
+          if (selectedItems[item.id]) {
+            // Calculate price: use sub-features if available, otherwise base price
+            let itemPrice = 0
+            if (item.subFeatures && item.subFeatures.length > 0) {
+              // Sum up selected sub-features
+              item.subFeatures.forEach(sf => {
+                if (selectedSubFeatures[sf.id]) {
+                  itemPrice += sf.price
+                }
+              })
+            } else if (item.price > 0) {
+              // Use base price
+              itemPrice = item.price
+            }
+
+            // Apply multiplier based on pricing unit
+            if (itemPrice > 0) {
+              if (item.per === "gb") monthlyTotal += itemPrice * counts.storage
+              else if (item.per === "asset") monthlyTotal += itemPrice * counts.asset
+              else monthlyTotal += itemPrice * counts.users
+            }
           }
         })
       }
     })
     monthlyTotal += counts.asset * UNIT_PRICES.asset
     if (counts.organizations > 1) monthlyTotal += (counts.organizations - 1) * UNIT_PRICES.organization
+    
+    // Add add-ons to monthly total
+    modules.forEach((mod) => {
+      if (activeModules[mod.id] && mod.addons) {
+        mod.addons.forEach(addon => {
+          if (selectedAddOns[addon.id]) {
+            monthlyTotal += addon.price
+          }
+        })
+      }
+    })
+    
     const yearlyModifier = billingCycle === "yearly" ? 12 * 0.8 : 1
     const sub = monthlyTotal * yearlyModifier * cur.rate
     const vat = sub * VAT_RATE
     return { subtotal: sub, vatAmount: vat, totalCost: sub + vat }
-  }, [activeModules, selectedItems, counts, billingCycle, cur, VAT_RATE])
+  }, [activeModules, selectedItems, selectedSubFeatures, selectedAddOns, modules, counts, billingCycle, cur, VAT_RATE])
 
   const scrollCards = (direction: "left" | "right") => {
     if (!scrollRef.current) return
@@ -207,19 +341,60 @@ export default function CustomizePlanPage() {
           )}
           style={{ scrollbarWidth: "thin" }}
         >
-          {modules.map((mod) => (
+          {/* Loading State */}
+          {isLoadingModules && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Loading services from backend...</p>
+            </div>
+          )}
+
+          {/* Error State */}
+          {!isLoadingModules && modulesError && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+              <AlertCircle className="h-8 w-8 text-destructive" />
+              <p className="text-sm text-muted-foreground">{modulesError}</p>
+              <button
+                onClick={fetchServicesData}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </button>
+              {isUsingFallback && (
+                <p className="text-xs text-muted-foreground">Using fallback data</p>
+              )}
+            </div>
+          )}
+
+          {/* Success State - Show Modules */}
+          {!isLoadingModules && !modulesError && modules.map((mod) => (
             <ModuleCard
               key={mod.id}
               mod={mod}
               isActive={activeModules[mod.id]}
               selectedItems={selectedItems}
               setSelectedItems={setSelectedItems}
+              selectedSubFeatures={selectedSubFeatures}
+              setSelectedSubFeatures={setSelectedSubFeatures}
+              expandedFeatures={expandedFeatures}
+              setExpandedFeatures={setExpandedFeatures}
               billingCycle={billingCycle}
               formatPrice={formatPrice}
               freeLabel={t.free}
               selectedLabel={t.selected}
             />
           ))}
+
+          {/* Using Fallback Indicator */}
+          {!isLoadingModules && isUsingFallback && !modulesError && (
+            <div className="absolute top-2 right-4 z-10">
+              <Badge variant="outline" className="text-xs">
+                <AlertCircle className="h-3 w-3 mr-1" />
+                Using fallback data
+              </Badge>
+            </div>
+          )}
         </div>
 
         {/* Scroll navigation */}
@@ -246,7 +421,14 @@ export default function CustomizePlanPage() {
         {/* Add-ons Section */}
         {showAddOns && (
           <div ref={addOnsRef} className="bg-background">
-            <AddOnsSection isAnnual={billingCycle === "yearly"} activeModules={activeModules} />
+            <AddOnsSection 
+              isAnnual={billingCycle === "yearly"} 
+              activeModules={activeModules}
+              modules={modules}
+              selectedAddOns={selectedAddOns}
+              onToggleAddOn={(addonId) => setSelectedAddOns(prev => ({ ...prev, [addonId]: !prev[addonId] }))}
+              formatPrice={formatPrice}
+            />
           </div>
         )}
 
