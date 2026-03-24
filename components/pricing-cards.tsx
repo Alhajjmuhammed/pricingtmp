@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Check, Sparkles, Zap, Rocket, Building2 } from "lucide-react"
@@ -41,8 +42,20 @@ export function PricingCard({
   plan: Plan
   isAnnual: boolean
 }) {
+  const router = useRouter()
   const price = isAnnual ? plan.annualPrice : plan.monthlyPrice
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  const handleCTAClick = () => {
+    // Store selected plan data
+    localStorage.setItem('selected_plan', JSON.stringify({
+      planId: plan.id,
+      planName: plan.name,
+      price,
+      isAnnual,
+    }))
+    router.push('/register')
+  }
 
   return (
     <div
@@ -107,6 +120,7 @@ export function PricingCard({
 
         {/* CTA */}
         <Button
+          onClick={() => handleCTAClick(plan)}
           className={cn(
             "w-full mb-6 font-medium h-11",
             plan.highlighted

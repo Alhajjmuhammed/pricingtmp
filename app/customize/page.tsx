@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect, useRef, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   ChevronLeft,
@@ -13,6 +14,7 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  ArrowRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -39,6 +41,7 @@ import {
 } from "@/lib/graphql-client"
 
 export default function CustomizePlanPage() {
+  const router = useRouter()
   const [lang, setLang] = useState<LangKey>("en")
   const [currency, setCurrency] = useState("USD")
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("yearly")
@@ -225,10 +228,29 @@ export default function CustomizePlanPage() {
   }
 
   const handleContinue = () => {
-    setShowAddOns(true)
-    setTimeout(() => {
-      addOnsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
-    }, 100)
+    if (!showAddOns) {
+      setShowAddOns(true)
+      setTimeout(() => {
+        addOnsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }, 100)
+    } else {
+      // Store customization data and proceed to registration
+      localStorage.setItem('customization_data', JSON.stringify({
+        activeModules,
+        selectedItems,
+        selectedSubFeatures,
+        selectedAddOns,
+        counts,
+        billingCycle,
+        currency,
+        pricing: {
+          subtotal,
+          vatAmount,
+          totalCost,
+        },
+      }))
+      router.push('/register')
+    }
   }
 
   return (
@@ -474,8 +496,8 @@ export default function CustomizePlanPage() {
               <button
                 onClick={handleContinue}
                 className="flex-1 sm:flex-none bg-primary hover:bg-primary/90 text-primary-foreground px-8 sm:px-12 py-3 sm:py-3.5 rounded-2xl font-bold text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center justify-center gap-2 group">
-                {t.continue}
-                <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
+                {showAddOns ? 'Proceed to Checkout' : t.continue}
+                {showAddOns ? <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" /> : <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />}
               </button>
             </div>
           </div>
