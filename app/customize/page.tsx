@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import {
-  modules as fallbackModules,
+
   UNIT_PRICES,
   CURRENCIES,
   TRANSLATIONS,
@@ -61,10 +61,9 @@ export default function CustomizePlanPage() {
   const VAT_RATE = 0.18
 
   // Dynamic data states
-  const [modules, setModules] = useState<Module[]>(fallbackModules)
+  const [modules, setModules] = useState<Module[]>([])
   const [isLoadingModules, setIsLoadingModules] = useState(true)
   const [modulesError, setModulesError] = useState<string | null>(null)
-  const [isUsingFallback, setIsUsingFallback] = useState(false)
 
   const t = TRANSLATIONS[lang]
   const cur = CURRENCIES[currency]
@@ -74,7 +73,6 @@ export default function CustomizePlanPage() {
     try {
       setIsLoadingModules(true)
       setModulesError(null)
-      setIsUsingFallback(false)
 
       const data = await graphqlRequest<{ serviceCategories: ServiceCategory[] }>(
         GET_SERVICE_CATEGORIES
@@ -121,9 +119,7 @@ export default function CustomizePlanPage() {
         }))
 
       if (transformedModules.length === 0) {
-        console.warn('No services found in backend, using fallback data')
-        setModules(fallbackModules)
-        setIsUsingFallback(true)
+        setModulesError('No services found. Please check your backend data.')
       } else {
         setModules(transformedModules)
         
@@ -137,8 +133,6 @@ export default function CustomizePlanPage() {
     } catch (error) {
       console.error('Failed to fetch services:', error)
       setModulesError(error instanceof Error ? error.message : 'Failed to load services')
-      setIsUsingFallback(true)
-      setModules(fallbackModules)
     } finally {
       setIsLoadingModules(false)
     }
@@ -361,9 +355,7 @@ export default function CustomizePlanPage() {
                 <RefreshCw className="h-4 w-4" />
                 Retry
               </button>
-              {isUsingFallback && (
-                <p className="text-xs text-muted-foreground">Using fallback data</p>
-              )}
+
             </div>
           )}
 
@@ -386,15 +378,7 @@ export default function CustomizePlanPage() {
             />
           ))}
 
-          {/* Using Fallback Indicator */}
-          {!isLoadingModules && isUsingFallback && !modulesError && (
-            <div className="absolute top-2 right-4 z-10">
-              <Badge variant="outline" className="text-xs">
-                <AlertCircle className="h-3 w-3 mr-1" />
-                Using fallback data
-              </Badge>
-            </div>
-          )}
+
         </div>
 
         {/* Scroll navigation */}

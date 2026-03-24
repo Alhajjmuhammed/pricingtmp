@@ -1,9 +1,11 @@
 /**
  * GraphQL Client for Pricingtmp
- * Connects to Django Backend (Port 8001)
+ * Connects to  Django Backends:
+ * - Port 8000 (Wellongepay) for main pricing
+ * - Port 8001 (Client Management) for customize page
  */
 
-import { GRAPHQL_BASE_URL } from './api-config';
+import { GRAPHQL_BASE_URL, PRICING_GRAPHQL_URL } from './api-config';
 
 interface GraphQLResponse<T> {
   data?: T;
@@ -49,7 +51,82 @@ export async function graphqlRequest<T>(
   return result.data;
 }
 
+/**
+ * GraphQL request function for pricing backend (Port 8000)
+ * @param query - GraphQL query string
+ * @param variables - Query variables
+ * @returns Query result
+ */
+export async function pricingGraphqlRequest<T>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  const response = await fetch(PRICING_GRAPHQL_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tenant-ID': '9cde3604-bbf8-4f97-ba54-dcc713229d6f', // Tenant ID for pricing
+    },
+    body: JSON.stringify({
+      query,
+      variables,
+    }),
+    cache: 'no-store', // Prevent caching
+  });
+
+  const result: GraphQLResponse<T> = await response.json();
+
+  if (result.errors) {
+    throw new Error(result.errors.map(e => e.message).join(', '));
+  }
+
+  if (!result.data) {
+    throw new Error('No data returned from GraphQL');
+  }
+
+  return result.data;
+}
+
 // ============ GRAPHQL QUERIES ============
+
+// Pricing Plans Query (Port 8000)
+export const GET_PRICING_PLANS = `
+  query GetPricingPlans {
+    pricingPagePackages {
+      id
+      name
+      tagline
+      monthlyPrice
+      annualPrice
+      badge
+      highlighted
+      features
+      previousPlan
+      cta
+      ctaVariant
+    }
+  }
+`
+
+export const GET_FEATURE_COMPARISON = `
+  query GetFeatureComparison {
+    featureComparison {
+      id
+      name
+      features {
+        id
+        name
+        tooltip
+        values {
+          packageId
+          packageName
+          valueType
+          valueJson
+        }
+      }
+    }
+  }
+`;
 
 export const GET_SERVICE_CATEGORIES = `
   query GetServiceCategories {

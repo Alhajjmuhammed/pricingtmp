@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState, useEffect } from "react"
 import {
   Sheet,
   SheetContent,
@@ -35,8 +35,19 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { featureComparison, type FeatureValue } from "@/lib/pricing-data"
+import { type FeatureValue } from "@/lib/pricing-data"
 import type { Plan } from "@/lib/pricing-data"
+import { pricingGraphqlRequest, GET_FEATURE_COMPARISON } from "@/lib/graphql-client"
+
+// Transformed feature category type
+type FeatureCategory = {
+  name: string
+  features: {
+    name: string
+    tooltip?: string
+    plans: Record<string, FeatureValue>
+  }[]
+}
 
 const categoryIcons: Record<string, React.ReactNode> = {
   "Feature usage limits": <Database className="h-4 w-4" />,
@@ -144,6 +155,65 @@ export function PlanFeaturesSheet({
   onOpenChange: (open: boolean) => void
 }) {
   const price = isAnnual ? plan.annualPrice : plan.monthlyPrice
+  const [featureComparison, setFeatureComparison] = useState<FeatureCategory[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      fetchData()
+    }
+  }, [open])
+
+  const fetchData = async () => {
+    setLoading(true)
+    try {
+      const comparisonData = await pricingGraphqlRequest(GET_FEATURE_COMPARISON)
+
+      if (comparisonData?.featureComparison) {
+        const transformed: FeatureCategory[] = comparisonData.featureComparison.map((category: any) => ({
+          name: category.name,
+          features: category.features.map((feature: any) => {
+            const plans: Record<string, FeatureValue> = {}
+            
+            feature.values.forEach((value: any) => {
+              const packageId = value.packageId
+              let transformedValue: FeatureValue
+              
+              try {
+                const parsedValue = JSON.parse(value.valueJson)
+                
+                if (value.valueType === 'boolean') {
+                  transformedValue = parsedValue
+                } else if (value.valueType === 'complex' && typeof parsedValue === 'object') {
+                  transformedValue = { main: parsedValue.main, sub: parsedValue.sub }
+                } else {
+                  transformedValue = parsedValue
+                }
+              } catch (e) {
+                transformedValue = false
+              }
+              
+              plans[packageId] = transformedValue
+            })
+            
+            return {
+              name: feature.name,
+              tooltip: feature.tooltip,
+              plans
+            }
+          })
+        }))
+
+        setFeatureComparison(transformed)
+      }
+    } catch (err) {
+      console.error('Failed to fetch feature comparison:', err)
+      setError('Unable to load features. Please make sure the backend is running on port 8000.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const categoryStats = useMemo(() => {
     return featureComparison.map((category) => {
@@ -158,7 +228,7 @@ export function PlanFeaturesSheet({
         pct: Math.round((included / total) * 100),
       }
     })
-  }, [plan.id])
+  }, [plan.id, featureComparison])
 
   const totalFeatures = categoryStats.reduce((a, c) => a + c.total, 0)
   const totalIncluded = categoryStats.reduce((a, c) => a + c.included, 0)
@@ -263,7 +333,26 @@ export function PlanFeaturesSheet({
 
         {/* Scrollable feature list */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          {featureComparison.map((category, catIdx) => {
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">Loading features...</p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="flex items-center justify-center py-16 px-4">
+              <div className="text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 text-destructive mx-auto mb-3">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3a9 9 0 100 18A9 9 0 0012 3z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-foreground mb-1">Failed to load features</p>
+                <p className="text-xs text-muted-foreground">{error}</p>
+              </div>
+            </div>
+          ) : featureComparison.map((category, catIdx) => {
             const stat = categoryStats[catIdx]
             return (
               <div
@@ -382,7 +471,7 @@ export function PlanFeaturesSheet({
             </div>
           </div>
 
-          {plan.previousPlan && (
+          {!loading && !error && plan.previousPlan && (
             <div className="mt-4 rounded-lg border border-border bg-secondary/30 p-3">
               <p className="text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground">

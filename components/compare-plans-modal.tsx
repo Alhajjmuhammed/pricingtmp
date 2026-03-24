@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { X, ChevronUp, ChevronDown, Info, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -9,7 +9,24 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { featureComparison, plans, type FeatureValue } from "@/lib/pricing-data"
+import { type FeatureValue } from "@/lib/pricing-data"
+import { pricingGraphqlRequest, GET_FEATURE_COMPARISON, GET_PRICING_PLANS } from "@/lib/graphql-client"
+
+// Types for transformed data
+type Plan = {
+  id: string
+  name: string
+  highlighted: boolean
+}
+
+type FeatureCategory = {
+  name: string
+  features: {
+    name: string
+    tooltip?: string
+    plans: Record<string, FeatureValue>
+  }[]
+}
 
 /* ---------- Value renderer matching screenshot style ---------- */
 function CellValue({ value }: { value: FeatureValue | undefined }) {
@@ -45,8 +62,10 @@ function CellValue({ value }: { value: FeatureValue | undefined }) {
 /* ---------- Category section with collapsible toggle ---------- */
 function CategorySection({
   category,
+  plans,
 }: {
-  category: (typeof featureComparison)[number]
+  category: FeatureCategory
+  plans: Plan[]
 }) {
   const [isOpen, setIsOpen] = useState(true)
 
@@ -139,6 +158,76 @@ export function ComparePlansModal({
   onOpenChange: (open: boolean) => void
 }) {
   const close = useCallback(() => onOpenChange(false), [onOpenChange])
+  const [featureComparison, setFeatureComparison] = useState<FeatureCategory[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      fetchData()
+    }
+  }, [open])
+
+  const fetchData = async () => {
+    setLoading(true)
+    try {
+      const [comparisonData, plansData] = await Promise.all([
+        pricingGraphqlRequest(GET_FEATURE_COMPARISON),
+        pricingGraphqlRequest(GET_PRICING_PLANS)
+      ])
+
+      if (comparisonData?.featureComparison && plansData?.pricingPagePackages) {
+        const transformedPlans: Plan[] = plansData.pricingPagePackages.map((pkg: any) => ({
+          id: pkg.id,
+          name: pkg.name,
+          highlighted: pkg.highlighted || false
+        }))
+
+        const transformedComparison: FeatureCategory[] = comparisonData.featureComparison.map((category: any) => ({
+          name: category.name,
+          features: category.features.map((feature: any) => {
+            const plans: Record<string, FeatureValue> = {}
+            
+            feature.values.forEach((value: any) => {
+              const packageId = value.packageId
+              let transformedValue: FeatureValue
+              
+              try {
+                const parsedValue = JSON.parse(value.valueJson)
+                
+                if (value.valueType === 'boolean') {
+                  transformedValue = parsedValue
+                } else if (value.valueType === 'complex' && typeof parsedValue === 'object') {
+                  transformedValue = { main: parsedValue.main, sub: parsedValue.sub }
+                } else {
+                  transformedValue = parsedValue
+                }
+              } catch (e) {
+                transformedValue = false
+              }
+              
+              plans[packageId] = transformedValue
+            })
+            
+            return {
+              name: feature.name,
+              tooltip: feature.tooltip,
+              plans
+            }
+          })
+        }))
+
+        setPlans(transformedPlans)
+        setFeatureComparison(transformedComparison)
+      }
+    } catch (err) {
+      console.error('Failed to fetch feature comparison:', err)
+      setError('Unable to load comparison. Please make sure the backend is running on port 8000.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   if (!open) return null
 
@@ -159,6 +248,26 @@ export function ComparePlansModal({
       {/* Scrollable table area */}
       <div className="flex-1 overflow-auto">
         <div className="mx-auto max-w-[1200px] px-4 py-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                <p className="text-sm text-muted-foreground">Loading comparison...</p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="flex items-center justify-center py-24 px-4">
+              <div className="text-center max-w-md">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive mx-auto mb-4">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3a9 9 0 100 18A9 9 0 0012 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-base font-semibold text-foreground mb-2">Failed to load comparison</h3>
+                <p className="text-sm text-muted-foreground">{error}</p>
+              </div>
+            </div>
+          ) : (
           <table className="w-full border-collapse">
             {/* Sticky column headers */}
             <thead>
@@ -191,15 +300,15 @@ export function ComparePlansModal({
                 <CategorySection
                   key={category.name}
                   category={category}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    plans={plans}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}        </div>
       </div>
 
-      {/* Bottom bar */}
-      <div className="flex items-center justify-between border-t border-border px-6 py-4 bg-card shrink-0">
+      {/* Bottom bar */}      <div className="flex items-center justify-between border-t border-border px-6 py-4 bg-card shrink-0">
         <p className="text-sm text-muted-foreground">
           {featureComparison.reduce((acc, c) => acc + c.features.length, 0)} features compared across {plans.length} plans
         </p>
