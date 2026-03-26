@@ -16,11 +16,12 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
-  modules,
+  modules as staticModules,
   UNIT_PRICES,
   CURRENCIES,
   type LangKey,
   type Counts,
+  type Module,
 } from "@/lib/customize-data"
 
 const VAT_RATE = 0.18
@@ -30,6 +31,9 @@ interface InvoiceSummaryProps {
   onOpenChange: (open: boolean) => void
   activeModules: Record<string, boolean>
   selectedItems: Record<string, boolean>
+  selectedSubFeatures?: Record<string, boolean>
+  selectedAddOns?: Record<string, boolean>
+  modules?: Module[]
   counts: Counts
   billingCycle: "monthly" | "yearly"
   currency: string
@@ -47,6 +51,9 @@ export function InvoiceSummary({
   onOpenChange,
   activeModules,
   selectedItems,
+  selectedSubFeatures = {},
+  selectedAddOns = {},
+  modules: dynamicModules,
   counts,
   billingCycle,
   currency,
@@ -54,26 +61,36 @@ export function InvoiceSummary({
   const cur = CURRENCIES[currency]
   const isYearly = billingCycle === "yearly"
   const periodLabel = isYearly ? "year" : "month"
+  const resolvedModules = dynamicModules ?? staticModules
 
   const { lineItems, subtotal, vatAmount, grandTotal } = useMemo(() => {
     const items: LineItem[] = []
     let sub = 0
 
-    // Module items
-    modules.forEach((mod) => {
+    // Module items (features + sub-features)
+    resolvedModules.forEach((mod) => {
       if (!activeModules[mod.id]) return
       mod.items.forEach((item) => {
         if (!selectedItems[item.id]) return
-        if (item.price <= 0) return
+        // Use selected sub-feature prices if the item has sub-features; otherwise use base price
+        let itemPrice = 0
+        if (item.subFeatures && item.subFeatures.length > 0) {
+          item.subFeatures.forEach(sf => {
+            if (selectedSubFeatures[sf.id]) itemPrice += sf.price
+          })
+        } else {
+          itemPrice = item.price
+        }
+        if (itemPrice <= 0) return
         let qty = counts.users
         let unit = "user"
         if (item.per === "gb") { qty = counts.storage; unit = "GB" }
         else if (item.per === "asset") { qty = counts.asset; unit = "asset" }
-        const monthly = item.price * qty
+        const monthly = itemPrice * qty
         const period = isYearly ? monthly * 12 * 0.8 : monthly
         items.push({
           label: item.name,
-          detail: `${qty} ${unit}${qty > 1 ? "s" : ""} x ${cur.symbol}${(item.price * cur.rate).toFixed(2)}/${unit}/mo${isYearly ? " x 12 x 0.8" : ""}`,
+          detail: `${qty} ${unit}${qty > 1 ? "s" : ""} x ${cur.symbol}${(itemPrice * cur.rate).toFixed(2)}/${unit}/mo${isYearly ? " x 12 x 0.8" : ""}`,
           amount: period * cur.rate,
         })
         sub += period * cur.rate
@@ -93,22 +110,38 @@ export function InvoiceSummary({
       sub += converted
     }
 
-    // Multi-org
-    if (counts.organizations > 1) {
-      const orgCost = (counts.organizations - 1) * UNIT_PRICES.organization
+    // Organizations
+    {
+      const orgCost = counts.organizations * UNIT_PRICES.organization
       const period = isYearly ? orgCost * 12 * 0.8 : orgCost
       const converted = period * cur.rate
       items.push({
-        label: "Additional Organizations",
-        detail: `${counts.organizations - 1} extra x ${cur.symbol}${(UNIT_PRICES.organization * cur.rate).toFixed(2)}/org/mo`,
+        label: "Organizations",
+        detail: `${counts.organizations} org${counts.organizations !== 1 ? "s" : ""} x ${cur.symbol}${(UNIT_PRICES.organization * cur.rate).toFixed(2)}/org/mo`,
         amount: converted,
       })
       sub += converted
     }
 
+    // Add-ons
+    resolvedModules.forEach((mod) => {
+      if (!activeModules[mod.id] || !mod.addons) return
+      mod.addons.forEach(addon => {
+        if (!selectedAddOns[addon.id]) return
+        const period = isYearly ? addon.price * 12 * 0.8 : addon.price
+        const converted = period * cur.rate
+        items.push({
+          label: addon.name,
+          detail: `Add-on${isYearly ? " x 12 x 0.8" : ""}`,
+          amount: converted,
+        })
+        sub += converted
+      })
+    })
+
     const vat = sub * VAT_RATE
     return { lineItems: items, subtotal: sub, vatAmount: vat, grandTotal: sub + vat }
-  }, [activeModules, selectedItems, counts, billingCycle, cur, isYearly])
+  }, [activeModules, selectedItems, selectedSubFeatures, selectedAddOns, resolvedModules, counts, billingCycle, cur, isYearly])
 
   const handleExport = () => {
     const activeModList = Object.keys(activeModules).filter((k) => activeModules[k])

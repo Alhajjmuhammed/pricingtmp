@@ -106,6 +106,9 @@ export async function createPersonalProfile(input: {
   phone_number?: string;
   date_of_birth?: string;
   location?: string;
+  country?: string;
+  job_title?: string;
+  preferred_contact?: string;
   headline?: string;
   bio?: string;
 }): Promise<{
@@ -119,6 +122,9 @@ export async function createPersonalProfile(input: {
       phone_number: input.phone_number,
       date_of_birth: input.date_of_birth,
       location: input.location,
+      country: input.country,
+      job_title: input.job_title,
+      preferred_contact: input.preferred_contact,
       headline: input.headline,
       bio: input.bio,
     });
@@ -168,6 +174,7 @@ export async function createPersonalPreferences(input: {
 export async function createOrganization(input: {
   name: string;
   legal_name?: string;
+  slug?: string;
   industry?: string;
   size?: string;
   personal_account_owner_id: string;
@@ -182,6 +189,7 @@ export async function createOrganization(input: {
     const response = await wellongeIdCreateOrganization({
       name: input.name,
       legal_name: input.legal_name,
+      slug: input.slug,
       industry: input.industry,
       size: input.size,
       entity_type: 'company',

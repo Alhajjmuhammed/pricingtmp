@@ -29,6 +29,9 @@ export interface CreatePersonalProfileInput {
   phone_number?: string;
   date_of_birth?: string;
   location?: string;
+  country?: string;
+  job_title?: string;
+  preferred_contact?: string;
   headline?: string;
   bio?: string;
   skills?: string[];
@@ -69,6 +72,7 @@ export interface PersonalPreferencesResponse {
 export interface CreateOrganizationInput {
   name: string;
   legal_name?: string;
+  slug?: string;
   industry?: string;
   size?: string;
   entity_type?: string;
@@ -128,6 +132,9 @@ export async function createPersonalProfile(
       phone_number: input.phone_number,
       date_of_birth: input.date_of_birth,
       location: input.location,
+      country: input.country,
+      job_title: input.job_title,
+      preferred_contact: input.preferred_contact,
       headline: input.headline,
       bio: input.bio,
       skills: input.skills,
@@ -158,6 +165,7 @@ export async function createOrganization(
     {
       name: input.name,
       legal_name: input.legal_name,
+      slug: input.slug,
       industry: input.industry,
       size: input.size,
       entity_type: input.entity_type,

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Loader2, Mail, Lock, User, Phone, Building2, MapPin, Package, DollarSign, Check, X, Plus, Minus, ChevronDown, HardDrive, Calendar, Briefcase, Globe } from "lucide-react"
+import { ArrowLeft, Loader2, Mail, Lock, User, Phone, Building2, Package, DollarSign, Check, Plus, Minus, ChevronDown, HardDrive, Calendar, Briefcase, Globe } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -108,7 +108,6 @@ export default function RegisterPage() {
   const [step, setStep] = useState(1) // 1: Account + Organization, 2: Review
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [accountId, setAccountId] = useState("")
 
   // Account data
   const [email, setEmail] = useState("")
@@ -119,7 +118,6 @@ export default function RegisterPage() {
   // Profile data
   const [phoneNumber, setPhoneNumber] = useState("")
   const [countryCode, setCountryCode] = useState("+255")
-  const [location, setLocation] = useState("")
   const [country, setCountry] = useState("")
   const [jobTitle, setJobTitle] = useState("")
   const [dateOfBirth, setDateOfBirth] = useState("")
@@ -137,7 +135,6 @@ export default function RegisterPage() {
 
   // Editing states for review page
   const [editingAccount, setEditingAccount] = useState(false)
-  const [editingProfile, setEditingProfile] = useState(false)
   const [editingOrg, setEditingOrg] = useState(false)
   const [editingPackage, setEditingPackage] = useState(false)
 
@@ -154,8 +151,10 @@ export default function RegisterPage() {
   const [subFeaturePrices, setSubFeaturePrices] = useState<Record<string, number>>({})
   const [userCount, setUserCount] = useState(3)
   const [assetCount, setAssetCount] = useState(3)
+  const [orgCount, setOrgCount] = useState(1)
   const [storageGB, setStorageGB] = useState(10)
   const [assetPrice, setAssetPrice] = useState(2)
+  const [orgUnitPrice, setOrgUnitPrice] = useState(50)
   const [storagePrice, setStoragePrice] = useState(2)
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, boolean>>({})
 
@@ -166,15 +165,6 @@ export default function RegisterPage() {
       return
     }
     setEditingAccount(false)
-    setError("")
-  }
-
-  const handleSaveProfile = () => {
-    if (!phoneNumber || !country || !jobTitle) {
-      setError("Please fill in all profile fields")
-      return
-    }
-    setEditingProfile(false)
     setError("")
   }
 
@@ -198,8 +188,10 @@ export default function RegisterPage() {
       subFeaturePrices,
       userCount,
       assetCount,
+      orgCount,
       storageGB,
       assetPrice,
+      orgUnitPrice,
       storagePrice,
       totalPrice: calculateTotal(),
     }
@@ -363,10 +355,17 @@ export default function RegisterPage() {
 
   // Toggle addon selection
   const toggleAddon = (addonId: string) => {
-    setSelectedAddOns(prev => ({
-      ...prev,
-      [addonId]: !prev[addonId],
-    }))
+    setSelectedAddOns(prev => {
+      const next = { ...prev, [addonId]: !prev[addonId] }
+      // Persist immediately so both display-mode and edit-mode stay in sync
+      const customData = localStorage.getItem('customization_data')
+      if (customData) {
+        const saved = JSON.parse(customData)
+        saved.selectedAddOns = next
+        localStorage.setItem('customization_data', JSON.stringify(saved))
+      }
+      return next
+    })
   }
 
   // Calculate total price
@@ -385,6 +384,7 @@ export default function RegisterPage() {
     })
     
     monthly += assetCount * assetPrice
+    monthly += orgCount * orgUnitPrice
     monthly += storageGB * storagePrice
     
     // Add addons
@@ -401,32 +401,12 @@ export default function RegisterPage() {
     return monthly
   }
 
-  // Fetch services on mount and when editingPackage changes
+  // Fetch services on mount
   useEffect(() => {
     if (services.length === 0) {
       fetchServices()
     }
-  }, [customizationData])
-
-  const handleRemoveModule = (moduleIdx: number) => {
-    if (customizationData?.modules) {
-      const updatedModules = customizationData.modules.filter((_: any, idx: number) => idx !== moduleIdx)
-      setCustomizationData({ ...customizationData, modules: updatedModules })
-    }
-  }
-
-  const handleRemoveAddon = (addonIdx: number) => {
-    if (customizationData?.addons) {
-      const updatedAddons = customizationData.addons.filter((_: any, idx: number) => idx !== addonIdx)
-      setCustomizationData({ ...customizationData, addons: updatedAddons })
-    }
-  }
-
-  const handleChangePlanPrice = (newPrice: number) => {
-    if (selectedPlan) {
-      setSelectedPlan({ ...selectedPlan, price: newPrice })
-    }
-  }
+  }, [])
 
   // Load selected plan and customization on mount
   useEffect(() => {
@@ -450,8 +430,10 @@ export default function RegisterPage() {
         setSubFeaturePrices(savedData.subFeaturePrices || {})
         setUserCount(savedData.userCount || 3)
         setAssetCount(savedData.assetCount || 3)
+        setOrgCount(savedData.orgCount || 1)
         setStorageGB(savedData.storageGB || 10)
         setAssetPrice(savedData.assetPrice || 2)
+        setOrgUnitPrice(savedData.orgUnitPrice || 50)
         setStoragePrice(savedData.storagePrice || 2)
       } else if (savedData.activeModules || savedData.selectedItems) {
         // Old format from customize page - set basic data now
@@ -462,10 +444,12 @@ export default function RegisterPage() {
         if (savedData.counts) {
           setUserCount(savedData.counts.users || 3)
           setAssetCount(savedData.counts.asset || 3)
+          setOrgCount(savedData.counts.organizations || 1)
           setStorageGB(savedData.counts.storage || 10)
         }
         
         setAssetPrice(2)
+        setOrgUnitPrice(50)
         setStoragePrice(2)
         
         // Note: We'll map activeModules to selectedServices after services are fetched
@@ -496,24 +480,29 @@ export default function RegisterPage() {
     setStep(2) // Move to review step
   }
 
-  const handleProfileAndOrgSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    // Validate all fields
-    if (!orgName || !orgSlug || !industry || !orgSize) {
-      setError("Please fill in all organization fields")
-      return
-    }
-    
-    setError("")
-    setStep(3) // Move to review step
-  }
-
   const handleOrganizationSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!orgName || !industry || !orgSize) {
-      setError("Please fill in all fields")
+
+    // Close any open edit sections first and re-validate everything
+    if (editingAccount) {
+      handleSaveAccount()
+      return
+    }
+    if (editingOrg) {
+      handleSaveOrg()
+      return
+    }
+    if (editingPackage) {
+      handleSavePackage()
+      return
+    }
+
+    if (!email || !password || !firstName || !lastName || !phoneNumber || !country || !jobTitle || !orgName || !orgSlug || !industry || !orgSize) {
+      setError("Please fill in all required fields")
+      return
+    }
+    if (preferredContact.length === 0) {
+      setError("Please select at least one preferred contact method")
       return
     }
     
@@ -534,7 +523,7 @@ export default function RegisterPage() {
       })
 
       if (!accountResponse.success || !accountResponse.data?.id) {
-        const errorMsg = accountResponse.message || accountResponse.errors?.[0] || "Failed to create account"
+        const errorMsg = accountResponse.message || accountResponse.errors?.[0] || (accountResponse as any).error || "Failed to create account"
         console.error('❌ Account creation failed:', errorMsg)
         setError(errorMsg)
         return
@@ -547,12 +536,15 @@ export default function RegisterPage() {
       console.log('📝 Step 2: Creating profile...')
       const profileResponse = await createPersonalProfile({
         personal_account_id: newAccountId,
-        phone_number: phoneNumber,
-        location,
+        phone_number: `${countryCode}${phoneNumber}`,
+        country,
+        job_title: jobTitle,
+        date_of_birth: dateOfBirth || undefined,
+        preferred_contact: preferredContact.join(","),
       })
 
       if (!profileResponse.success) {
-        const errorMsg = profileResponse.message || profileResponse.errors?.[0] || "Failed to create profile"
+        const errorMsg = profileResponse.message || profileResponse.errors?.[0] || (profileResponse as any).error || "Failed to create profile"
         console.error('❌ Profile creation failed:', errorMsg)
         setError(errorMsg)
         return
@@ -564,15 +556,16 @@ export default function RegisterPage() {
       const orgResponse = await createOrganization({
         name: orgName,
         legal_name: orgName,
+        slug: orgSlug,
         industry,
         size: orgSize,
         personal_account_owner_id: newAccountId,
         primary_email: email,
-        primary_phone: phoneNumber,
+        primary_phone: `${countryCode}${phoneNumber}`,
       })
 
       if (!orgResponse.success || !orgResponse.data?.id) {
-        const errorMsg = orgResponse.message || orgResponse.errors?.[0] || "Failed to create organization"
+        const errorMsg = orgResponse.message || orgResponse.errors?.[0] || (orgResponse as any).error || "Failed to create organization"
         console.error('❌ Organization creation failed:', errorMsg)
         setError(errorMsg)
         return
@@ -586,10 +579,15 @@ export default function RegisterPage() {
         email,
         firstName,
         lastName,
+        countryCode,
         phoneNumber,
-        location,
+        country,
+        jobTitle,
+        dateOfBirth,
+        preferredContact,
         orgId: orgResponse.data.id,
         orgName,
+        orgSlug,
         industry,
         orgSize,
       }))
@@ -942,7 +940,6 @@ export default function RegisterPage() {
                       variant="ghost" 
                       size="sm" 
                       onClick={() => {
-                        console.log('Edit button clicked, current state:', editingAccount)
                         if (editingAccount) {
                           handleSaveAccount()
                         } else {
@@ -955,9 +952,7 @@ export default function RegisterPage() {
                     </Button>
                   </div>
                   
-                  {(() => {
-                    console.log('Rendering Account section, editingAccount:', editingAccount)
-                    return editingAccount ? (
+                  {editingAccount ? (
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
@@ -1123,8 +1118,7 @@ export default function RegisterPage() {
                         <p className="font-medium">{preferredContact.join(", ")}</p>
                       </div>
                     </div>
-                  )
-                  })()}
+                  )}
                 </div>
 
                 {/* Organization Info Summary */}
@@ -1294,6 +1288,7 @@ export default function RegisterPage() {
                         const assets = assetCount || customizationData?.assetCount || customizationData?.counts?.asset || 3
                         const storage = storageGB || customizationData?.storageGB || customizationData?.counts?.storage || 10
                         const assetPriceVal = assetPrice || customizationData?.assetPrice || 2
+                        const orgPriceVal = orgUnitPrice || customizationData?.orgUnitPrice || 50
                         const storagePriceVal = storagePrice || customizationData?.storagePrice || 2
                         
                         // Get selected services and features
@@ -1336,13 +1331,94 @@ export default function RegisterPage() {
                               </div>
                             )}
                             
-                            {/* Resources */}
-                            <div className="mt-4 pt-4 border-t border-border text-sm">
+                            {/* Resources — interactive in display mode */}
+                            <div className="mt-4 pt-4 border-t border-border">
                               <p className="text-xs font-semibold text-muted-foreground mb-2">RESOURCES</p>
-                              <div className="space-y-1">
-                                <p>• Users: {users}</p>
-                                <p>• Assets: {assets} (${assetPriceVal}/ea)</p>
-                                <p>• Storage: {storage} GB (${storagePriceVal}/GB)</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {/* Users */}
+                                <div className="bg-background rounded-lg p-2.5 border">
+                                  <div className="flex items-center gap-1.5 mb-2">
+                                    <div className="w-6 h-6 rounded-md bg-blue-500 flex items-center justify-center flex-shrink-0">
+                                      <User className="w-3 h-3 text-white" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold leading-tight">Users</p>
+                                      <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setUserCount(Math.max(1, userCount - 1))}>
+                                      <Minus className="w-2.5 h-2.5" />
+                                    </Button>
+                                    <span className="text-sm font-bold text-blue-600 w-6 text-center">{userCount}</span>
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setUserCount(userCount + 1)}>
+                                      <Plus className="w-2.5 h-2.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                {/* Assets */}
+                                <div className="bg-background rounded-lg p-2.5 border">
+                                  <div className="flex items-center gap-1.5 mb-2">
+                                    <div className="w-6 h-6 rounded-md bg-purple-500 flex items-center justify-center flex-shrink-0">
+                                      <Package className="w-3 h-3 text-white" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold leading-tight">Assets</p>
+                                      <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setAssetCount(Math.max(0, assetCount - 1))}>
+                                      <Minus className="w-2.5 h-2.5" />
+                                    </Button>
+                                    <span className="text-sm font-bold text-purple-600 w-6 text-center">{assets}</span>
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setAssetCount(assetCount + 1)}>
+                                      <Plus className="w-2.5 h-2.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                {/* Organizations */}
+                                <div className="bg-background rounded-lg p-2.5 border">
+                                  <div className="flex items-center gap-1.5 mb-2">
+                                    <div className="w-6 h-6 rounded-md bg-orange-500 flex items-center justify-center flex-shrink-0">
+                                      <Building2 className="w-3 h-3 text-white" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold leading-tight">Orgs</p>
+                                      <p className="text-[10px] text-muted-foreground leading-tight">${orgPriceVal}/ea</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setOrgCount(Math.max(1, orgCount - 1))}>
+                                      <Minus className="w-2.5 h-2.5" />
+                                    </Button>
+                                    <span className="text-sm font-bold text-orange-600 w-6 text-center">{orgCount}</span>
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setOrgCount(orgCount + 1)}>
+                                      <Plus className="w-2.5 h-2.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                {/* Storage */}
+                                <div className="bg-background rounded-lg p-2.5 border">
+                                  <div className="flex items-center gap-1.5 mb-2">
+                                    <div className="w-6 h-6 rounded-md bg-green-500 flex items-center justify-center flex-shrink-0">
+                                      <HardDrive className="w-3 h-3 text-white" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold leading-tight">Storage</p>
+                                      <p className="text-[10px] text-muted-foreground leading-tight">${storagePriceVal}/GB</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setStorageGB(Math.max(0, storageGB - 5))}>
+                                      <Minus className="w-2.5 h-2.5" />
+                                    </Button>
+                                    <span className="text-sm font-bold text-green-600 w-6 text-center">{storage}</span>
+                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setStorageGB(storageGB + 5)}>
+                                      <Plus className="w-2.5 h-2.5" />
+                                    </Button>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           </>
@@ -1412,16 +1488,7 @@ export default function RegisterPage() {
                                             "flex items-center justify-between p-2 rounded-md cursor-pointer transition-all border text-xs",
                                             isSelected ? "bg-amber-50 border-amber-300" : "bg-background border-border hover:border-amber-200"
                                           )}
-                                          onClick={() => {
-                                            const newSelectedAddOns = { ...selectedAddOns, [addon.id]: !selectedAddOns[addon.id] }
-                                            setSelectedAddOns(newSelectedAddOns)
-                                            const customData = localStorage.getItem('customization_data')
-                                            if (customData) {
-                                              const saved = JSON.parse(customData)
-                                              saved.selectedAddOns = newSelectedAddOns
-                                              localStorage.setItem('customization_data', JSON.stringify(saved))
-                                            }
-                                          }}
+                                          onClick={() => toggleAddon(addon.id)}
                                         >
                                           <div className="flex items-center gap-2 flex-1">
                                             <div className={cn(
@@ -1489,7 +1556,7 @@ export default function RegisterPage() {
                           </div>
 
                           {/* Resource Configuration */}
-                          <div className="grid grid-cols-3 gap-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             {/* Users */}
                             <div className="bg-background rounded-lg p-3 border">
                               <div className="flex items-center gap-2 mb-2">
@@ -1558,6 +1625,40 @@ export default function RegisterPage() {
                               </div>
                             </div>
 
+                            {/* Organizations */}
+                            <div className="bg-background rounded-lg p-3 border">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
+                                  <Building2 className="w-4 h-4 text-white" />
+                                </div>
+                                <div>
+                                  <p className="text-xs font-semibold">Orgs</p>
+                                  <p className="text-[10px] text-muted-foreground">${orgUnitPrice}/ea</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-center gap-2 bg-muted/50 rounded-md py-1.5">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-6 w-6 rounded-full"
+                                  onClick={() => setOrgCount(Math.max(1, orgCount - 1))}
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </Button>
+                                <span className="text-lg font-bold text-orange-600 w-10 text-center">{orgCount}</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-6 w-6 rounded-full"
+                                  onClick={() => setOrgCount(orgCount + 1)}
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </div>
+
                             {/* Storage */}
                             <div className="bg-background rounded-lg p-3 border">
                               <div className="flex items-center gap-2 mb-2">
@@ -1592,8 +1693,6 @@ export default function RegisterPage() {
                               </div>
                             </div>
                           </div>
-
-                          {/* Features Section */}
                           {selectedServices.length > 0 && (
                             <div className="border rounded-lg overflow-hidden">
                               {/* Service Tabs */}
@@ -1751,14 +1850,8 @@ export default function RegisterPage() {
                                                           <p className="text-[10px] text-muted-foreground">{subFeature.description}</p>
                                                         </div>
                                                       </div>
-                                                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                                                        <span className="text-[10px] text-purple-600">$</span>
-                                                        <Input
-                                                          type="number"
-                                                          value={subFeaturePrices[subFeature.id] ?? subFeature.price}
-                                                          onChange={(e) => setSubFeaturePrices({ ...subFeaturePrices, [subFeature.id]: Math.max(0, parseFloat(e.target.value) || 0) })}
-                                                          className="w-12 h-5 text-[11px] text-center border-dashed border-purple-300"
-                                                        />
+                                                      <div className="text-[10px] text-purple-600 font-semibold ml-2">
+                                                        ${(subFeaturePrices[subFeature.id] ?? subFeature.price).toFixed(2)}/u
                                                       </div>
                                                     </div>
                                                   )
@@ -1943,7 +2036,12 @@ export default function RegisterPage() {
                   type="button" 
                   variant="outline" 
                   className="flex-1" 
-                  onClick={() => setStep(1)}
+                  onClick={() => {
+                    setStep(1)
+                    setEditingAccount(false)
+                    setEditingOrg(false)
+                    setEditingPackage(false)
+                  }}
                 >
                   Back to Form
                 </Button>

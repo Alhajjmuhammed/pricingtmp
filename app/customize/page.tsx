@@ -199,7 +199,7 @@ export default function CustomizePlanPage() {
       }
     })
     monthlyTotal += counts.asset * UNIT_PRICES.asset
-    if (counts.organizations > 1) monthlyTotal += (counts.organizations - 1) * UNIT_PRICES.organization
+    monthlyTotal += counts.organizations * UNIT_PRICES.organization
     
     // Add add-ons to monthly total
     modules.forEach((mod) => {
@@ -509,6 +509,9 @@ export default function CustomizePlanPage() {
           onOpenChange={setInvoiceOpen}
           activeModules={activeModules}
           selectedItems={selectedItems}
+          selectedSubFeatures={selectedSubFeatures}
+          selectedAddOns={selectedAddOns}
+          modules={modules}
           counts={counts}
           billingCycle={billingCycle}
           currency={currency}
