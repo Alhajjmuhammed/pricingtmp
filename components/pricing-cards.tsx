@@ -47,13 +47,16 @@ export function PricingCard({
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const handleCTAClick = () => {
-    // Store selected plan data
     localStorage.setItem('selected_plan', JSON.stringify({
       planId: plan.id,
-      planName: plan.name,
+      name: plan.name,
       price,
-      isAnnual,
+      billing: isAnnual ? 'annual' : 'monthly',
+      features: plan.features,
+      description: plan.tagline,
     }))
+    // Clear any previous custom plan data — user picked a pre-built plan
+    localStorage.removeItem('customization_data')
     router.push('/register')
   }
 

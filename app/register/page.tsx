@@ -1230,18 +1230,7 @@ export default function RegisterPage() {
                       <Package className="h-5 w-5 text-primary" />
                       <h4 className="font-semibold">Selected Package</h4>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button 
-                        type="button" 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => editingPackage ? handleSavePackage() : setEditingPackage(true)}
-                        className="h-7 text-xs"
-                      >
-                        {editingPackage ? 'Save' : 'Edit'}
-                      </Button>
-
-                    </div>
+                    <div />
                   </div>
                   
                   {!editingPackage ? (
@@ -1255,6 +1244,11 @@ export default function RegisterPage() {
                             <p className="font-bold text-lg">{selectedPlan.name || 'Custom Plan'}</p>
                             {selectedPlan.description && (
                               <p className="text-sm text-muted-foreground">{selectedPlan.description}</p>
+                            )}
+                            {selectedPlan.price && (
+                              <p className="text-sm font-semibold text-primary mt-1">
+                                ${selectedPlan.price}/seat/mo{selectedPlan.billing === 'annual' ? ' · billed annually' : ''}
+                              </p>
                             )}
                           </div>
                           
@@ -1273,11 +1267,11 @@ export default function RegisterPage() {
                           )}
                         </div>
                       ) : (
-                        <p className="text-sm text-muted-foreground">No plan selected. Click Edit to customize.</p>
+                        <p className="font-bold text-lg">Custom Plan</p>
                       )}
 
-                      {/* Show Resources and Selected Items */}
-                      {isLoadingServices ? (
+                      {/* Show Resources and Selected Items (only for custom plans) */}
+                      {customizationData && (isLoadingServices ? (
                         <div className="mt-4 pt-4 border-t border-border flex items-center justify-center py-4">
                           <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" />
                           <span className="text-sm text-muted-foreground">Loading configuration...</span>
@@ -1346,14 +1340,8 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setUserCount(Math.max(1, userCount - 1))}>
-                                      <Minus className="w-2.5 h-2.5" />
-                                    </Button>
-                                    <span className="text-sm font-bold text-blue-600 w-6 text-center">{userCount}</span>
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setUserCount(userCount + 1)}>
-                                      <Plus className="w-2.5 h-2.5" />
-                                    </Button>
+                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                    <span className="text-sm font-bold text-blue-600">{userCount}</span>
                                   </div>
                                 </div>
                                 {/* Assets */}
@@ -1367,14 +1355,8 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setAssetCount(Math.max(0, assetCount - 1))}>
-                                      <Minus className="w-2.5 h-2.5" />
-                                    </Button>
-                                    <span className="text-sm font-bold text-purple-600 w-6 text-center">{assets}</span>
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setAssetCount(assetCount + 1)}>
-                                      <Plus className="w-2.5 h-2.5" />
-                                    </Button>
+                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                    <span className="text-sm font-bold text-purple-600">{assets}</span>
                                   </div>
                                 </div>
                                 {/* Organizations */}
@@ -1388,14 +1370,8 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${orgPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setOrgCount(Math.max(1, orgCount - 1))}>
-                                      <Minus className="w-2.5 h-2.5" />
-                                    </Button>
-                                    <span className="text-sm font-bold text-orange-600 w-6 text-center">{orgCount}</span>
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setOrgCount(orgCount + 1)}>
-                                      <Plus className="w-2.5 h-2.5" />
-                                    </Button>
+                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                    <span className="text-sm font-bold text-orange-600">{orgCount}</span>
                                   </div>
                                 </div>
                                 {/* Storage */}
@@ -1409,27 +1385,21 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${storagePriceVal}/GB</p>
                                     </div>
                                   </div>
-                                  <div className="flex items-center justify-between bg-muted/50 rounded-md px-1.5 py-1">
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setStorageGB(Math.max(0, storageGB - 5))}>
-                                      <Minus className="w-2.5 h-2.5" />
-                                    </Button>
-                                    <span className="text-sm font-bold text-green-600 w-6 text-center">{storage}</span>
-                                    <Button type="button" variant="outline" size="icon" className="h-5 w-5 rounded-full" onClick={() => setStorageGB(storageGB + 5)}>
-                                      <Plus className="w-2.5 h-2.5" />
-                                    </Button>
+                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                    <span className="text-sm font-bold text-green-600">{storage}</span>
                                   </div>
                                 </div>
                               </div>
                             </div>
                           </>
                         )
-                      })()}
+                      })())}
                       </div>{/* end left */}
 
                       {/* Right: Add-ons */}
                       <div>
-                          {/* Interactive Add-ons — tabbed by selected services only */}
-                          {!isLoadingServices && services.length > 0 && (() => {
+                          {/* Add-ons (read-only display) */}
+                          {customizationData && !isLoadingServices && services.length > 0 && (() => {
                             const servicesWithAddons = services.filter((s: any) => selectedServices.includes(s.id) && (s.addons || []).length > 0)
                             if (servicesWithAddons.length === 0) return null
 
@@ -1485,10 +1455,9 @@ export default function RegisterPage() {
                                         <div
                                           key={addon.id}
                                           className={cn(
-                                            "flex items-center justify-between p-2 rounded-md cursor-pointer transition-all border text-xs",
-                                            isSelected ? "bg-amber-50 border-amber-300" : "bg-background border-border hover:border-amber-200"
+                                            "flex items-center justify-between p-2 rounded-md transition-all border text-xs",
+                                            isSelected ? "bg-amber-50 border-amber-300" : "bg-background border-border"
                                           )}
-                                          onClick={() => toggleAddon(addon.id)}
                                         >
                                           <div className="flex items-center gap-2 flex-1">
                                             <div className={cn(
@@ -1978,7 +1947,7 @@ export default function RegisterPage() {
                       <div className="flex justify-between text-sm">
                         <span>{selectedPlan.name || 'Plan'}</span>
                         <span className="font-medium">
-                          ${selectedPlan.price || 0}/{selectedPlan.billing === 'annual' ? 'year' : 'month'}
+                          ${selectedPlan.price || 0}/month{selectedPlan.billing === 'annual' ? ' (annual)' : ''}
                         </span>
                       </div>
                     ) : (
@@ -1988,10 +1957,8 @@ export default function RegisterPage() {
                       </div>
                     )}
 
-                    {(() => {
-                      // Use calculateTotal() when services are loaded, fall back to saved total while loading
-                      const customizationTotal = services.length > 0 ? calculateTotal() : (customizationData?.totalPrice || 0)
-                      
+                    {customizationData && (() => {
+                      const customizationTotal = customizationData?.totalPrice || customizationData?.pricing?.totalCost || 0
                       if (customizationTotal > 0) {
                         return (
                           <div className="flex justify-between text-sm">
@@ -2008,12 +1975,12 @@ export default function RegisterPage() {
                         <span className="font-semibold text-lg">Total</span>
                         <span className="text-2xl font-bold text-primary">
                           ${(() => {
-                            const planPrice = selectedPlan?.price || 0
-                            const customizationTotal = services.length > 0 ? calculateTotal() : (customizationData?.totalPrice || 0)
+                            const planPrice = selectedPlan && !customizationData ? (selectedPlan?.price || 0) : 0
+                            const customizationTotal = customizationData ? (customizationData?.totalPrice || customizationData?.pricing?.totalCost || 0) : 0
                             return (planPrice + customizationTotal).toFixed(2)
                           })()}
                           <span className="text-sm font-normal text-muted-foreground ml-1">
-                            /{selectedPlan?.billing === 'annual' ? 'year' : 'month'}
+                            /month
                           </span>
                         </span>
                       </div>
@@ -2027,9 +1994,6 @@ export default function RegisterPage() {
                 </div>
               </div>{/* end BOTTOM */}
 
-              <div className="text-center text-sm text-muted-foreground mb-4">
-                Need to change something? Click "Edit" on any section above to update inline
-              </div>
 
               <div className="flex gap-3">
                 <Button 
