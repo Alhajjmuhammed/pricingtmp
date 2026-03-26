@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
-import { registerPersonalAccount, createPersonalProfile, createOrganization } from "@/services"
+import { registerPersonalAccount, createPersonalProfile, createOrganization, requestEmailVerificationCode, verifyEmailCode, resendEmailVerificationCode } from "@/services"
 import { 
   graphqlRequest, 
   GET_SERVICE_CATEGORIES,
@@ -247,6 +247,7 @@ export default function RegisterPage() {
   // Account data
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
 
@@ -301,6 +302,13 @@ export default function RegisterPage() {
   const [billingAddress, setBillingAddress] = useState("")
   const [billingCity, setBillingCity] = useState("")
   const [billingCountry, setBillingCountry] = useState("")
+
+  // OTP email verification (step 1 sub-flow)
+  const [emailStep, setEmailStep] = useState<'email' | 'otp' | 'form'>('email')
+  const [otpValue, setOtpValue] = useState("")
+  const [otpSending, setOtpSending] = useState(false)
+  const [otpVerifying, setOtpVerifying] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
 
   // Handle inline save with validation
   const handleSaveAccount = () => {
@@ -552,6 +560,13 @@ export default function RegisterPage() {
     }
   }, [])
 
+  // Resend OTP cooldown countdown
+  useEffect(() => {
+    if (resendCooldown <= 0) return
+    const timer = setTimeout(() => setResendCooldown(c => c - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [resendCooldown])
+
   // Load selected plan and customization on mount
   useEffect(() => {
     const planData = localStorage.getItem('selected_plan')
@@ -611,6 +626,54 @@ export default function RegisterPage() {
     }
   }, [])
 
+  const handleSendOtp = async () => {
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!email || !emailPattern.test(email)) {
+      setError("Please enter a valid email address")
+      return
+    }
+    setError("")
+    setOtpSending(true)
+    try {
+      await requestEmailVerificationCode(email, 'eopsentre')
+      setEmailStep('otp')
+      setResendCooldown(60)
+    } catch (err: any) {
+      setError(err?.message || "Failed to send OTP. Please try again.")
+    } finally {
+      setOtpSending(false)
+    }
+  }
+
+  const handleVerifyOtp = async () => {
+    if (!otpValue || otpValue.length < 4) {
+      setError("Please enter the verification code")
+      return
+    }
+    setError("")
+    setOtpVerifying(true)
+    try {
+      await verifyEmailCode(otpValue, email)
+      setEmailStep('form')
+      setOtpValue("")
+    } catch (err: any) {
+      setError(err?.message || "Invalid code. Please try again.")
+    } finally {
+      setOtpVerifying(false)
+    }
+  }
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return
+    try {
+      await resendEmailVerificationCode(email, 'eopsentre')
+      setResendCooldown(60)
+      setError("")
+    } catch (err: any) {
+      setError(err?.message || "Failed to resend code.")
+    }
+  }
+
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -622,6 +685,11 @@ export default function RegisterPage() {
     
     if (password.length < 8) {
       setError("Password must be at least 8 characters")
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match")
       return
     }
     
@@ -796,7 +864,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-5xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <Link href="/customize" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6">
+          <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6">
             <ArrowLeft className="h-4 w-4" />
             Back to pricing
           </Link>
@@ -840,8 +908,154 @@ export default function RegisterPage() {
             </div>
           )}
 
+          {/* Step 1 – Email entry sub-step */}
+          {step === 1 && emailStep === 'email' && (
+            <div className="max-w-sm mx-auto space-y-6 py-4">
+              <div className="text-center space-y-2">
+                <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Mail className="h-7 w-7 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold">Verify Your Email</h3>
+                <p className="text-muted-foreground text-sm">
+                  Enter your email address to receive a one-time verification code.
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="email-otp-entry">Email Address</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="email-otp-entry"
+                      type="email"
+                      placeholder="you@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendOtp() } }}
+                      className="pl-10"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full"
+                  size="lg"
+                  onClick={handleSendOtp}
+                  disabled={otpSending}
+                >
+                  {otpSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Send Verification Code
+                </Button>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  size="lg"
+                  onClick={() => { /* Google OAuth */ }}
+                >
+                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" aria-label="Google">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                  Sign in with Google
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  size="lg"
+                  onClick={() => { /* Apple OAuth */ }}
+                >
+                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-label="Apple">
+                    <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.4.07 2.38.74 3.2.8 1.22-.24 2.38-.93 3.7-.84 1.58.12 2.76.72 3.54 1.88-3.25 1.97-2.48 5.9.54 7.05-.58 1.5-1.33 2.98-2.98 3.99M12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25"/>
+                  </svg>
+                  Sign in with Apple
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 1 – OTP verification sub-step */}
+          {step === 1 && emailStep === 'otp' && (
+            <div className="max-w-sm mx-auto space-y-6 py-4">
+              <div className="text-center space-y-2">
+                <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Mail className="h-7 w-7 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold">Check Your Email</h3>
+                <p className="text-muted-foreground text-sm">
+                  We sent a 6-digit code to{" "}
+                  <span className="font-medium text-foreground">{email}</span>
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="otp-code">Verification Code</Label>
+                  <Input
+                    id="otp-code"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Enter 6-digit code"
+                    value={otpValue}
+                    onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleVerifyOtp() } }}
+                    className="text-center text-xl tracking-[0.5em] font-mono"
+                    autoFocus
+                    autoComplete="one-time-code"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  className="w-full"
+                  size="lg"
+                  onClick={handleVerifyOtp}
+                  disabled={otpVerifying}
+                >
+                  {otpVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Verify & Continue
+                </Button>
+                <div className="text-center text-sm text-muted-foreground">
+                  Didn&apos;t receive it?{" "}
+                  {resendCooldown > 0 ? (
+                    <span>Resend in {resendCooldown}s</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResendOtp}
+                      className="text-primary hover:underline font-medium"
+                    >
+                      Resend Code
+                    </button>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-muted-foreground"
+                  onClick={() => { setEmailStep('email'); setOtpValue(""); setError("") }}
+                >
+                  ← Use a different email
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Step 1: Account + Organization */}
-          {step === 1 && (
+          {step === 1 && emailStep === 'form' && (
             <form onSubmit={handleAccountSubmit} className="space-y-6">
               <div className="grid md:grid-cols-2 gap-6">
                 {/* Left Column - Personal Details */}
@@ -886,12 +1100,13 @@ export default function RegisterPage() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder="alhajjmuhammed@gmail.com"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
-                      required
+                      readOnly
+                      className="pl-10 pr-24 bg-muted cursor-default"
                     />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-xs text-green-600 font-medium">
+                      <Check className="h-3 w-3" /> Verified
+                    </span>
                   </div>
                 </div>
 
@@ -1011,30 +1226,11 @@ export default function RegisterPage() {
                     </label>
                   </div>
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
-                      required
-                      minLength={8}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Minimum 8 characters</p>
-                </div>
                 </div>
 
                 {/* Right Column - Organization Information */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold border-b pb-2">Organization Information</h3>
-                  <p className="text-sm text-muted-foreground">Company profile details</p>
                   
                   <div className="space-y-2">
                     <Label htmlFor="orgName">Organization Name</Label>
@@ -1111,6 +1307,48 @@ export default function RegisterPage() {
                         <option value="Government">Government</option>
                         <option value="Other">Other</option>
                       </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Password</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="password"
+                          type="password"
+                          placeholder="••••••••"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          className="pl-10"
+                          required
+                          minLength={8}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">Minimum 8 characters</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="confirmPassword">Confirm Password</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="confirmPassword"
+                          type="password"
+                          placeholder="••••••••"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          className={`pl-10 ${confirmPassword && confirmPassword !== password ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                          required
+                        />
+                        {confirmPassword && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                            {confirmPassword === password
+                              ? <Check className="h-4 w-4 text-green-600" />
+                              : <span className="text-xs text-destructive font-medium">No match</span>
+                            }
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

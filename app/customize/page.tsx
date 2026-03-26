@@ -239,6 +239,30 @@ export default function CustomizePlanPage() {
     return { subtotal: sub, vatAmount: vat, totalCost: sub + vat }
   }, [activeModules, selectedItems, selectedSubFeatures, selectedAddOns, modules, counts, billingCycle, cur, VAT_RATE])
 
+  // Validate that user has selected at least 1 service with 1 feature with 1 sub-feature
+  const isValidSelection = useMemo(() => {
+    // Must have at least one active module
+    const activeModuleNames = Object.keys(activeModules).filter(name => activeModules[name] === true)
+    if (activeModuleNames.length === 0) return false
+
+    // For each active module, check if it has a feature with a selected sub-feature
+    for (const moduleName of activeModuleNames) {
+      const module = modules.find(m => m.name === moduleName)
+      if (!module) continue
+
+      // Check if this module has at least one feature with a selected sub-feature
+      for (const feature of module.items) {
+        if (selectedItems[feature.id] !== true) continue // Skip unselected features
+        
+        // Check if this feature has at least one selected sub-feature
+        const hasSubFeature = feature.subFeatures?.some(sf => selectedSubFeatures[sf.id] === true)
+        if (hasSubFeature) return true // Found valid selection!
+      }
+    }
+
+    return false
+  }, [activeModules, selectedItems, selectedSubFeatures, modules])
+
   const scrollCards = (direction: "left" | "right") => {
     if (!scrollRef.current) return
     const amount = 380
@@ -519,7 +543,8 @@ export default function CustomizePlanPage() {
               </button>
               <button
                 onClick={handleContinue}
-                className="flex-1 sm:flex-none bg-primary hover:bg-primary/90 text-primary-foreground px-8 sm:px-12 py-3 sm:py-3.5 rounded-2xl font-bold text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center justify-center gap-2 group">
+                disabled={!isValidSelection}
+                className="flex-1 sm:flex-none bg-primary hover:bg-primary/90 disabled:bg-muted disabled:opacity-50 disabled:cursor-not-allowed text-primary-foreground px-8 sm:px-12 py-3 sm:py-3.5 rounded-2xl font-bold text-[11px] uppercase tracking-widest transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center justify-center gap-2 group">
                 {showAddOns ? 'Proceed to Checkout' : t.continue}
                 {showAddOns ? <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" /> : <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />}
               </button>
