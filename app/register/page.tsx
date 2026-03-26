@@ -30,6 +30,141 @@ const COUNTRY_CODES = [
   { code: "+44",  iso: "gb", name: "UK" },
 ]
 
+const COUNTRIES = [
+  { iso: "tz", name: "Tanzania" },
+  { iso: "ke", name: "Kenya" },
+  { iso: "ug", name: "Uganda" },
+  { iso: "rw", name: "Rwanda" },
+  { iso: "bi", name: "Burundi" },
+  { iso: "et", name: "Ethiopia" },
+  { iso: "za", name: "South Africa" },
+  { iso: "ng", name: "Nigeria" },
+  { iso: "eg", name: "Egypt" },
+  { iso: "us", name: "USA" },
+  { iso: "gb", name: "UK" },
+  { iso: null, name: "Other" },
+]
+
+function detectCardType(number: string): "visa" | "mastercard" | "amex" | "discover" | null {
+  const raw = number.replace(/\s/g, "")
+  if (/^4/.test(raw)) return "visa"
+  if (/^(5[1-5]|2[2-7])/.test(raw)) return "mastercard"
+  if (/^3[47]/.test(raw)) return "amex"
+  if (/^(6011|65|64[4-9]|622)/.test(raw)) return "discover"
+  return null
+}
+
+function CardBrandIcon({ type }: { type: "visa" | "mastercard" | "amex" | "discover" | null }) {
+  if (!type) return null
+  const logos: Record<string, React.ReactNode> = {
+    visa: (
+      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Visa">
+        <rect width="38" height="24" rx="3" fill="#1A1F71" />
+        <text x="6" y="17" fontFamily="Arial" fontWeight="bold" fontSize="13" fill="white" letterSpacing="0">VISA</text>
+      </svg>
+    ),
+    mastercard: (
+      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Mastercard">
+        <rect width="38" height="24" rx="3" fill="#252525" />
+        <circle cx="14" cy="12" r="7" fill="#EB001B" />
+        <circle cx="24" cy="12" r="7" fill="#F79E1B" />
+        <path d="M19 7.2a7 7 0 0 1 0 9.6A7 7 0 0 1 19 7.2z" fill="#FF5F00" />
+      </svg>
+    ),
+    amex: (
+      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Amex">
+        <rect width="38" height="24" rx="3" fill="#2E77BC" />
+        <text x="4" y="17" fontFamily="Arial" fontWeight="bold" fontSize="10" fill="white">AMEX</text>
+      </svg>
+    ),
+    discover: (
+      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Discover">
+        <rect width="38" height="24" rx="3" fill="#FFFFFF" stroke="#E6E6E6" strokeWidth="1" />
+        <text x="3" y="16" fontFamily="Arial" fontWeight="bold" fontSize="8" fill="#231F20">DISCOVER</text>
+        <circle cx="29" cy="12" r="6" fill="#F76F20" />
+      </svg>
+    ),
+  }
+  return <>{logos[type]}</>
+}
+
+function CountryPicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (name: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleOutside)
+    return () => document.removeEventListener("mousedown", handleOutside)
+  }, [])
+
+  const selected = COUNTRIES.find((c) => c.name === value)
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 w-full h-10 rounded-md border border-input bg-background px-3 text-sm hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        {selected?.iso ? (
+          <img
+            src={`https://flagcdn.com/20x15/${selected.iso}.png`}
+            width={20}
+            height={15}
+            alt={selected.name}
+            className="rounded-sm object-cover flex-shrink-0"
+          />
+        ) : (
+          <Globe className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+        )}
+        <span className={cn("flex-1 text-left", !selected && "text-muted-foreground")}>
+          {selected?.name ?? "Select country"}
+        </span>
+        <ChevronDown className="h-3 w-3 opacity-50 flex-shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 left-0 z-50 bg-popover border rounded-md shadow-lg w-full max-h-60 overflow-y-auto">
+          {COUNTRIES.map((c) => (
+            <button
+              key={c.name}
+              type="button"
+              onClick={() => { onChange(c.name); setOpen(false) }}
+              className={cn(
+                "flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-accent text-left",
+                value === c.name && "bg-accent font-medium"
+              )}
+            >
+              {c.iso ? (
+                <img
+                  src={`https://flagcdn.com/20x15/${c.iso}.png`}
+                  width={20}
+                  height={15}
+                  alt={c.name}
+                  className="rounded-sm object-cover flex-shrink-0"
+                />
+              ) : (
+                <Globe className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              )}
+              <span>{c.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CountryCodePicker({
   value,
   onChange,
@@ -157,6 +292,15 @@ export default function RegisterPage() {
   const [orgUnitPrice, setOrgUnitPrice] = useState(50)
   const [storagePrice, setStoragePrice] = useState(2)
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, boolean>>({})
+
+  // Billing information (step 3)
+  const [billingName, setBillingName] = useState("")
+  const [cardNumber, setCardNumber] = useState("")
+  const [cardExpiry, setCardExpiry] = useState("")
+  const [cardCvv, setCardCvv] = useState("")
+  const [billingAddress, setBillingAddress] = useState("")
+  const [billingCity, setBillingCity] = useState("")
+  const [billingCountry, setBillingCountry] = useState("")
 
   // Handle inline save with validation
   const handleSaveAccount = () => {
@@ -412,8 +556,18 @@ export default function RegisterPage() {
   useEffect(() => {
     const planData = localStorage.getItem('selected_plan')
     const customData = localStorage.getItem('customization_data')
-    
-    if (planData) setSelectedPlan(JSON.parse(planData))
+
+    if (planData) {
+      const parsedPlan = JSON.parse(planData)
+      setSelectedPlan(parsedPlan)
+
+      // Pre-built plan (has planId) — forcefully discard any stale customization data
+      if (parsedPlan.planId) {
+        localStorage.removeItem('customization_data')
+        return // do NOT load customizationData — pre-built plan shows its own features
+      }
+    }
+
     if (customData) {
       const savedData = JSON.parse(customData)
       setCustomizationData(savedData)
@@ -505,13 +659,39 @@ export default function RegisterPage() {
       setError("Please select at least one preferred contact method")
       return
     }
-    
+
+    setError("")
+    setStep(3)
+  }
+
+  const handleBillingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!billingName || !cardNumber || !cardExpiry || !cardCvv || !billingAddress || !billingCity || !billingCountry) {
+      setError("Please fill in all billing fields")
+      return
+    }
+
+    const rawCard = cardNumber.replace(/\s/g, "")
+    if (rawCard.length < 15 || rawCard.length > 16) {
+      setError("Please enter a valid card number")
+      return
+    }
+    if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) {
+      setError("Please enter expiry in MM/YY format")
+      return
+    }
+    if (cardCvv.length < 3) {
+      setError("Please enter a valid CVV")
+      return
+    }
+
     setLoading(true)
     setError("")
 
     try {
       console.log('🔵 [Register] Creating account with all collected data...')
-      
+
       // Step 1: Create personal account
       console.log('📝 Step 1: Creating account...')
       const accountResponse = await registerPersonalAccount({
@@ -572,7 +752,7 @@ export default function RegisterPage() {
       }
       console.log('✅ Organization created, ID:', orgResponse.data.id)
 
-      // All steps completed successfully - store data and proceed to payment
+      // All steps completed — store registration + billing data and proceed to payment
       console.log('🎉 Registration complete! Moving to payment...')
       localStorage.setItem('registration_data', JSON.stringify({
         accountId: newAccountId,
@@ -591,7 +771,17 @@ export default function RegisterPage() {
         industry,
         orgSize,
       }))
-      
+
+      // Store billing info (card number masked for security)
+      localStorage.setItem('billing_data', JSON.stringify({
+        billingName,
+        cardLast4: rawCard.slice(-4),
+        cardExpiry,
+        billingAddress,
+        billingCity,
+        billingCountry,
+      }))
+
       router.push('/payment')
     } catch (err: any) {
       console.error('💥 [Register] Exception:', err)
@@ -617,15 +807,28 @@ export default function RegisterPage() {
         </div>
 
         {/* Progress Steps */}
-        <div className="flex justify-center items-center gap-4 mb-8">
-          {[1, 2].map((s) => (
-            <div key={s} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
-                step >= s ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/30 text-muted-foreground'
-              }`}>
-                {s}
+        <div className="flex justify-center items-center gap-2 mb-8">
+          {[
+            { num: 1, label: "Account Info" },
+            { num: 2, label: "Review Plan" },
+            { num: 3, label: "Billing" },
+          ].map(({ num, label }) => (
+            <div key={num} className="flex items-center gap-2">
+              <div className="flex flex-col items-center gap-1">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-sm font-semibold ${
+                  step > num
+                    ? 'bg-primary border-primary text-primary-foreground'
+                    : step === num
+                    ? 'bg-primary border-primary text-primary-foreground'
+                    : 'border-muted-foreground/30 text-muted-foreground'
+                }`}>
+                  {step > num ? <Check className="w-4 h-4" /> : num}
+                </div>
+                <span className={`text-[10px] font-medium whitespace-nowrap ${step >= num ? 'text-primary' : 'text-muted-foreground'}`}>
+                  {label}
+                </span>
               </div>
-              {s < 2 && <div className={`w-12 h-0.5 ${step > s ? 'bg-primary' : 'bg-muted-foreground/20'}`} />}
+              {num < 3 && <div className={`w-12 h-0.5 mb-4 ${step > num ? 'bg-primary' : 'bg-muted-foreground/20'}`} />}
             </div>
           ))}
         </div>
@@ -1230,7 +1433,17 @@ export default function RegisterPage() {
                       <Package className="h-5 w-5 text-primary" />
                       <h4 className="font-semibold">Selected Package</h4>
                     </div>
-                    <div />
+                    {customizationData && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => editingPackage ? handleSavePackage() : setEditingPackage(true)}
+                        className="h-7 text-xs"
+                      >
+                        {editingPackage ? 'Save' : 'Edit'}
+                      </Button>
+                    )}
                   </div>
                   
                   {!editingPackage ? (
@@ -1325,7 +1538,7 @@ export default function RegisterPage() {
                               </div>
                             )}
                             
-                            {/* Resources — interactive in display mode */}
+                            {/* Resources — with +/- controls for custom plan */}
                             <div className="mt-4 pt-4 border-t border-border">
                               <p className="text-xs font-semibold text-muted-foreground mb-2">RESOURCES</p>
                               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1340,8 +1553,10 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <button type="button" onClick={() => setUserCount(c => Math.max(1, c - 1))} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Minus className="w-2.5 h-2.5" /></button>
                                     <span className="text-sm font-bold text-blue-600">{userCount}</span>
+                                    <button type="button" onClick={() => setUserCount(c => c + 1)} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Plus className="w-2.5 h-2.5" /></button>
                                   </div>
                                 </div>
                                 {/* Assets */}
@@ -1355,8 +1570,10 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${assetPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <button type="button" onClick={() => setAssetCount(c => Math.max(0, c - 1))} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Minus className="w-2.5 h-2.5" /></button>
                                     <span className="text-sm font-bold text-purple-600">{assets}</span>
+                                    <button type="button" onClick={() => setAssetCount(c => c + 1)} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Plus className="w-2.5 h-2.5" /></button>
                                   </div>
                                 </div>
                                 {/* Organizations */}
@@ -1370,8 +1587,10 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${orgPriceVal}/ea</p>
                                     </div>
                                   </div>
-                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <button type="button" onClick={() => setOrgCount(c => Math.max(1, c - 1))} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Minus className="w-2.5 h-2.5" /></button>
                                     <span className="text-sm font-bold text-orange-600">{orgCount}</span>
+                                    <button type="button" onClick={() => setOrgCount(c => c + 1)} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Plus className="w-2.5 h-2.5" /></button>
                                   </div>
                                 </div>
                                 {/* Storage */}
@@ -1385,8 +1604,10 @@ export default function RegisterPage() {
                                       <p className="text-[10px] text-muted-foreground leading-tight">${storagePriceVal}/GB</p>
                                     </div>
                                   </div>
-                                  <div className="bg-muted/50 rounded-md px-1.5 py-1 text-center">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <button type="button" onClick={() => setStorageGB(c => Math.max(1, c - 1))} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Minus className="w-2.5 h-2.5" /></button>
                                     <span className="text-sm font-bold text-green-600">{storage}</span>
+                                    <button type="button" onClick={() => setStorageGB(c => c + 1)} className="w-5 h-5 rounded bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground"><Plus className="w-2.5 h-2.5" /></button>
                                   </div>
                                 </div>
                               </div>
@@ -1454,9 +1675,10 @@ export default function RegisterPage() {
                                       return (
                                         <div
                                           key={addon.id}
+                                          onClick={() => toggleAddon(addon.id)}
                                           className={cn(
-                                            "flex items-center justify-between p-2 rounded-md transition-all border text-xs",
-                                            isSelected ? "bg-amber-50 border-amber-300" : "bg-background border-border"
+                                            "flex items-center justify-between p-2 rounded-md transition-all border text-xs cursor-pointer",
+                                            isSelected ? "bg-amber-50 border-amber-300" : "bg-background border-border hover:border-amber-200"
                                           )}
                                         >
                                           <div className="flex items-center gap-2 flex-1">
@@ -1958,7 +2180,7 @@ export default function RegisterPage() {
                     )}
 
                     {customizationData && (() => {
-                      const customizationTotal = customizationData?.totalPrice || customizationData?.pricing?.totalCost || 0
+                      const customizationTotal = calculateTotal()
                       if (customizationTotal > 0) {
                         return (
                           <div className="flex justify-between text-sm">
@@ -1976,7 +2198,7 @@ export default function RegisterPage() {
                         <span className="text-2xl font-bold text-primary">
                           ${(() => {
                             const planPrice = selectedPlan && !customizationData ? (selectedPlan?.price || 0) : 0
-                            const customizationTotal = customizationData ? (customizationData?.totalPrice || customizationData?.pricing?.totalCost || 0) : 0
+                            const customizationTotal = customizationData ? calculateTotal() : 0
                             return (planPrice + customizationTotal).toFixed(2)
                           })()}
                           <span className="text-sm font-normal text-muted-foreground ml-1">
@@ -2008,6 +2230,185 @@ export default function RegisterPage() {
                   }}
                 >
                   Back to Form
+                </Button>
+                <Button type="submit" className="flex-1" size="lg">
+                  Continue to Billing
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* Step 3: Billing Information */}
+          {step === 3 && (
+            <form onSubmit={handleBillingSubmit} className="space-y-6">
+              <div className="text-center mb-6">
+                <h3 className="text-2xl font-bold">Billing Information</h3>
+                <p className="text-muted-foreground text-sm mt-1">Your payment details are secured with 256-bit SSL encryption</p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-8">
+                {/* Left: Card Details */}
+                <div className="space-y-5">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide border-b pb-2">Card Details</h4>
+
+                  {/* Cardholder Name */}
+                  <div className="space-y-2">
+                    <Label htmlFor="billingName">Cardholder Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="billingName"
+                        placeholder="Name as on card"
+                        value={billingName}
+                        onChange={(e) => setBillingName(e.target.value)}
+                        className="pl-10"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* Card Number */}
+                  <div className="space-y-2">
+                    <Label htmlFor="cardNumber">Card Number</Label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="cardNumber"
+                        placeholder="1234 5678 9012 3456"
+                        value={cardNumber}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/\D/g, "").slice(0, 16)
+                          const formatted = raw.replace(/(.{4})/g, "$1 ").trim()
+                          setCardNumber(formatted)
+                        }}
+                        className="pl-10 pr-14 tracking-widest"
+                        maxLength={19}
+                        required
+                      />
+                      {detectCardType(cardNumber) && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <CardBrandIcon type={detectCardType(cardNumber)} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expiry + CVV */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="cardExpiry">Expiry Date</Label>
+                      <div className="relative">
+                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="cardExpiry"
+                          placeholder="MM/YY"
+                          value={cardExpiry}
+                          onChange={(e) => {
+                            let v = e.target.value.replace(/\D/g, "").slice(0, 4)
+                            if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2)
+                            setCardExpiry(v)
+                          }}
+                          className="pl-10"
+                          maxLength={5}
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="cardCvv">CVV</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="cardCvv"
+                          placeholder="123"
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                          className="pl-10"
+                          maxLength={4}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Accepted cards notice */}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-md px-3 py-2">
+                    <Lock className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span>We accept Visa, Mastercard, and American Express. Card details are never stored on our servers.</span>
+                  </div>
+                </div>
+
+                {/* Right: Billing Address + Order Summary */}
+                <div className="space-y-5">
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide border-b pb-2">Billing Address</h4>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="billingAddress">Street Address</Label>
+                    <Input
+                      id="billingAddress"
+                      placeholder="123 Main Street"
+                      value={billingAddress}
+                      onChange={(e) => setBillingAddress(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="billingCity">City</Label>
+                      <Input
+                        id="billingCity"
+                        placeholder="Dar es Salaam"
+                        value={billingCity}
+                        onChange={(e) => setBillingCity(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="billingCountry">Country</Label>
+                      <CountryPicker
+                        value={billingCountry}
+                        onChange={setBillingCountry}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Order summary box */}
+                  <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mt-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order Summary</p>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Plan</span>
+                        <span className="font-medium">{selectedPlan?.name || "Custom Plan"}</span>
+                      </div>
+                      {selectedPlan?.billing && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Billing</span>
+                          <span className="font-medium capitalize">{selectedPlan.billing}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-1.5 mt-1.5 font-semibold">
+                        <span>Total</span>
+                        <span className="text-primary">
+                          ${customizationData
+                            ? (customizationData.totalPrice || customizationData.pricing?.totalCost || 0).toFixed(2)
+                            : (selectedPlan?.price || 0).toFixed(2)
+                          }/mo
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setStep(2); setError("") }}
+                >
+                  Back to Review
                 </Button>
                 <Button type="submit" className="flex-1" size="lg" disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

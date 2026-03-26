@@ -22,6 +22,7 @@ export function ModuleCard({
   formatPrice,
   freeLabel,
   selectedLabel,
+  onToggle,
 }: {
   mod: Module
   isActive: boolean
@@ -35,6 +36,7 @@ export function ModuleCard({
   formatPrice: (val: number) => string
   freeLabel: string
   selectedLabel: string
+  onToggle: () => void
 }) {
   // Calculate price for a feature (from selected sub-features or base price)
   const calculateFeaturePrice = (item: typeof mod.items[0]) => {
@@ -56,8 +58,9 @@ export function ModuleCard({
         "min-w-[300px] sm:min-w-[340px] lg:min-w-[360px] bg-card rounded-3xl border flex flex-col shadow-sm transition-all duration-500 shrink-0",
         isActive
           ? "border-border hover:shadow-lg hover:border-primary/20"
-          : "opacity-20 grayscale pointer-events-none border-border"
+          : "opacity-20 grayscale border-border cursor-pointer"
       )}
+      onClick={!isActive ? onToggle : undefined}
     >
       {/* Header */}
       <div className="p-5 border-b border-border flex items-center justify-between">

@@ -61,6 +61,7 @@ export default function CustomizePlanPage() {
   const [counts, setCounts] = useState<Counts>(DEFAULT_COUNTS)
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const restoredFromLocalStorage = useRef(false)
   const VAT_RATE = 0.18
 
   // Dynamic data states
@@ -125,13 +126,34 @@ export default function CustomizePlanPage() {
         setModulesError('No services found. Please check your backend data.')
       } else {
         setModules(transformedModules)
-        
-        // Update activeModules state with new module names
-        const newActiveModules: Record<string, boolean> = {}
-        transformedModules.forEach(mod => {
-          newActiveModules[mod.id] = false
-        })
-        setActiveModules(newActiveModules)
+
+        // Try to restore previous selections from localStorage
+        let savedData: any = null
+        try {
+          const raw = localStorage.getItem('customization_data')
+          if (raw) savedData = JSON.parse(raw)
+        } catch { /* ignore parse errors */ }
+
+        if (savedData?.activeModules) {
+          // Returning user — restore all selections, merging with currently available modules
+          const restoredActive: Record<string, boolean> = {}
+          transformedModules.forEach(mod => {
+            restoredActive[mod.id] = savedData.activeModules[mod.id] ?? false
+          })
+          setActiveModules(restoredActive)
+          if (savedData.selectedItems) setSelectedItems(savedData.selectedItems)
+          if (savedData.selectedSubFeatures) setSelectedSubFeatures(savedData.selectedSubFeatures)
+          if (savedData.selectedAddOns) setSelectedAddOns(savedData.selectedAddOns)
+          if (savedData.counts) setCounts(savedData.counts)
+          restoredFromLocalStorage.current = true
+        } else {
+          // Fresh visit — start with all modules inactive
+          const newActiveModules: Record<string, boolean> = {}
+          transformedModules.forEach(mod => {
+            newActiveModules[mod.id] = false
+          })
+          setActiveModules(newActiveModules)
+        }
       }
     } catch (error) {
       console.error('Failed to fetch services:', error)
@@ -146,18 +168,17 @@ export default function CustomizePlanPage() {
     fetchServicesData()
   }, [])
 
-  // Initialize items as NOT selected by default
+  // Initialize items as NOT selected by default (skip if state was restored from localStorage)
   useEffect(() => {
+    if (restoredFromLocalStorage.current) return
     const initial: Record<string, boolean> = {}
-    const initialSubFeatures: Record<string, boolean> = {}
     modules.forEach((m) => {
       m.items.forEach((i) => {
-        initial[i.id] = false  // Start with all features unselected
-        // Don't auto-select sub-features either
+        initial[i.id] = false
       })
     })
     setSelectedItems(initial)
-    setSelectedSubFeatures(initialSubFeatures)
+    setSelectedSubFeatures({})
   }, [modules])
 
   const formatPrice = useCallback(
@@ -235,6 +256,8 @@ export default function CustomizePlanPage() {
       }, 100)
     } else {
       // Store customization data and proceed to registration
+      // Clear any pre-built plan — user chose to customize instead
+      localStorage.removeItem('selected_plan')
       localStorage.setItem('customization_data', JSON.stringify({
         activeModules,
         selectedItems,
@@ -386,7 +409,7 @@ export default function CustomizePlanPage() {
             <ModuleCard
               key={mod.id}
               mod={mod}
-              isActive={activeModules[mod.id]}
+              isActive={activeModules[mod.id] ?? false}
               selectedItems={selectedItems}
               setSelectedItems={setSelectedItems}
               selectedSubFeatures={selectedSubFeatures}
@@ -397,6 +420,7 @@ export default function CustomizePlanPage() {
               formatPrice={formatPrice}
               freeLabel={t.free}
               selectedLabel={t.selected}
+              onToggle={() => setActiveModules((p) => ({ ...p, [mod.id]: !p[mod.id] }))}
             />
           ))}
 
