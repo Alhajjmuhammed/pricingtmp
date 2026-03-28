@@ -13,7 +13,13 @@ import { registerPersonalAccount, createPersonalProfile, createOrganization, req
 import { 
   graphqlRequest, 
   GET_SERVICE_CATEGORIES,
-  type ServiceCategory 
+  SAVE_CLIENT_DRAFT,
+  type ServiceCategory,
+  type SaveClientDraftResult,
+  type ClientDraftInput,
+  type ClientFeatureSelectionInput,
+  type ClientSubFeatureSelectionInput,
+  type ClientAddonSelectionInput,
 } from "@/lib/graphql-client"
 
 const COUNTRY_CODES = [
@@ -741,6 +747,8 @@ export default function RegisterPage() {
     }
 
     const rawCard = cardNumber.replace(/\s/g, "")
+    const cardBrand = detectCardType(cardNumber)
+    const cardLast4 = rawCard.slice(-4)
     if (rawCard.length < 15 || rawCard.length > 16) {
       setError("Please enter a valid card number")
       return
@@ -760,6 +768,41 @@ export default function RegisterPage() {
     try {
       console.log('🔵 [Register] Creating account with all collected data...')
 
+      // Determine registration source based on selected plan type
+      let registrationPlatform = 'eopsentre_pricing_custom' // default to custom
+      let organizationType = 'custom_plan'
+      let resolvedBillingPeriod = 'monthly'
+      let planNameNote = ''
+      
+      const storedPlan = localStorage.getItem('selected_plan')
+      if (storedPlan) {
+        try {
+          const planData = JSON.parse(storedPlan)
+          if (planData.planId) {
+            // User selected a pre-built package (Plus, ProMax, Enterprise, etc.)
+            registrationPlatform = 'eopsentre_pricing_package'
+            organizationType = 'prebuilt_plan'
+            console.log('📦 Registration source: Pre-built package', planData.planId)
+          } else {
+            console.log('🎨 Registration source: Custom plan')
+          }
+
+          resolvedBillingPeriod = (planData.billingCycle === 'annual' || planData.billingCycle === 'annually' || planData.billingCycle === 'yearly') ? 'yearly' : 'monthly'
+          if (planData.name) planNameNote = `Pre-built plan: ${planData.name}`
+        } catch (e) {
+          console.warn('Could not parse selected_plan, defaulting to custom')
+        }
+      }
+
+      if (customizationData?.billingCycle) {
+        resolvedBillingPeriod = customizationData.billingCycle
+      }
+
+      // Simplified registration source for client model and success page
+      const clientRegistrationSource = registrationPlatform === 'eopsentre_pricing_package'
+        ? 'pricing_package'
+        : 'pricing_custom'
+
       // Step 1: Create personal account
       console.log('📝 Step 1: Creating account...')
       const accountResponse = await registerPersonalAccount({
@@ -768,6 +811,7 @@ export default function RegisterPage() {
         first_name: firstName,
         last_name: lastName,
         accept_terms: true,
+        platform: registrationPlatform,
       })
 
       if (!accountResponse.success || !accountResponse.data?.id) {
@@ -807,6 +851,7 @@ export default function RegisterPage() {
         slug: orgSlug,
         industry,
         size: orgSize,
+        organization_type: organizationType,
         personal_account_owner_id: newAccountId,
         primary_email: email,
         primary_phone: `${countryCode}${phoneNumber}`,
@@ -820,37 +865,123 @@ export default function RegisterPage() {
       }
       console.log('✅ Organization created, ID:', orgResponse.data.id)
 
-      // All steps completed — store registration + billing data and proceed to payment
-      console.log('🎉 Registration complete! Moving to payment...')
+      // Step 4: Save client record to management backend (non-blocking)
+      console.log('📝 Step 4: Saving client to management backend...')
+      try {
+        // Build subfeature selections with parent feature lookup from services state
+        const planSubfeatureSelections: ClientSubFeatureSelectionInput[] = []
+        services.forEach((service: any) => {
+          if (selectedServices.includes(service.id)) {
+            service.features?.forEach((feature: any) => {
+              feature.subFeatures?.forEach((sf: any) => {
+                if (selectedSubFeatures[sf.id]) {
+                  planSubfeatureSelections.push({
+                    featureSlug: feature.id,
+                    subFeatureSlug: sf.id,
+                    isEnabled: true,
+                  })
+                }
+              })
+            })
+          }
+        })
+
+        const planFeatureSelections: ClientFeatureSelectionInput[] = Object.entries(selectedFeatures)
+          .filter(([_, v]) => v)
+          .map(([slug]) => ({ slug, quantity: userCount }))
+
+        const planAddonSelections: ClientAddonSelectionInput[] = Object.entries(selectedAddOns)
+          .filter(([_, v]) => v)
+          .map(([slug]) => ({ slug, quantity: 1 }))
+
+        const clientDraftInput: ClientDraftInput = {
+          // Personal info
+          firstName,
+          lastName,
+          primaryEmail: email,
+          primaryPhone: `${countryCode}${phoneNumber}`,
+          phoneCountryCode: countryCode,
+          birthDate: dateOfBirth || null,
+          jobTitle,
+          whatsappEnabled: preferredContact.includes('WhatsApp'),
+
+          // Business info
+          name: orgName,
+          legalName: orgName,
+          businessDomain: orgSlug,
+          industry,
+          companySize: orgSize,
+          organizationCount: orgCount,
+
+          // Billing address (from step 3)
+          street: billingAddress,
+          city: billingCity,
+          country: billingCountry,
+          billingName,
+          billingAddress,
+          cardBrand: cardBrand || undefined,
+          cardLast4,
+          cardExpiry,
+
+          // Billing period
+          billingPeriod: resolvedBillingPeriod,
+
+          // Notes (plan name for pre-built packages)
+          ...(planNameNote && { notes: planNameNote }),
+
+          // Registration tracking
+          registrationSource: clientRegistrationSource,
+          personalAccountId: newAccountId,
+
+          // Plan selections (only for custom plans)
+          ...(selectedServices.length > 0 && {
+            selectedServices,
+            featureSelections: planFeatureSelections,
+            subfeatureSelections: planSubfeatureSelections,
+            addonSelections: planAddonSelections,
+            userCount,
+            assetCount,
+            storageGb: storageGB,
+            assetPrice,
+            storagePrice,
+          }),
+        }
+
+        const clientResult = await graphqlRequest<SaveClientDraftResult>(SAVE_CLIENT_DRAFT, { input: clientDraftInput })
+        if (clientResult.saveClientDraft?.success) {
+          console.log('✅ Client saved to management backend, ID:', clientResult.saveClientDraft.client?.id)
+        } else {
+          console.warn('⚠️ Client draft returned failure (non-blocking):', clientResult.saveClientDraft?.message)
+        }
+      } catch (clientErr: any) {
+        // Non-blocking — account is already created, registration continues
+        console.warn('⚠️ Could not save client to management backend (non-blocking):', clientErr?.message)
+      }
+
+      // All steps completed — store data for success page and redirect
+      console.log('🎉 Registration complete!')
       localStorage.setItem('registration_data', JSON.stringify({
         accountId: newAccountId,
         email,
         firstName,
         lastName,
-        countryCode,
-        phoneNumber,
-        country,
-        jobTitle,
-        dateOfBirth,
-        preferredContact,
         orgId: orgResponse.data.id,
         orgName,
-        orgSlug,
         industry,
         orgSize,
+        registrationSource: clientRegistrationSource,
+        billingPeriod: resolvedBillingPeriod,
+        billing: {
+          billingName,
+          billingAddress,
+          billingCity,
+          billingCountry,
+          cardBrand: cardBrand || undefined,
+          cardLast4,
+          cardExpiry,
+        },
       }))
-
-      // Store billing info (card number masked for security)
-      localStorage.setItem('billing_data', JSON.stringify({
-        billingName,
-        cardLast4: rawCard.slice(-4),
-        cardExpiry,
-        billingAddress,
-        billingCity,
-        billingCountry,
-      }))
-
-      router.push('/payment')
+      router.push('/success')
     } catch (err: any) {
       console.error('💥 [Register] Exception:', err)
       setError(err.message || "An error occurred during registration")

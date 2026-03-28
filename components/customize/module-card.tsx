@@ -58,9 +58,8 @@ export function ModuleCard({
         "min-w-[300px] sm:min-w-[340px] lg:min-w-[360px] bg-card rounded-3xl border flex flex-col shadow-sm transition-all duration-500 shrink-0",
         isActive
           ? "border-border hover:shadow-lg hover:border-primary/20"
-          : "opacity-20 grayscale border-border cursor-pointer"
+          : "opacity-20 grayscale border-border"
       )}
-      onClick={!isActive ? onToggle : undefined}
     >
       {/* Header */}
       <div className="p-5 border-b border-border flex items-center justify-between">
@@ -104,6 +103,7 @@ export function ModuleCard({
               {/* Feature */}
               <div
                 onClick={() => {
+                  if (!isActive) return
                   setSelectedItems((p) => ({ ...p, [item.id]: !p[item.id] }))
                   // Auto-expand when selecting a feature with sub-features
                   if (hasSubFeatures && !isSelected) {
@@ -192,6 +192,7 @@ export function ModuleCard({
                         key={subFeature.id}
                         onClick={(e) => {
                           e.stopPropagation()
+                          if (!isActive) return
                           setSelectedSubFeatures(p => ({ ...p, [subFeature.id]: !p[subFeature.id] }))
                         }}
                         className={cn(

@@ -43,6 +43,7 @@ export async function registerPersonalAccount(input: {
   first_name?: string;
   last_name?: string;
   accept_terms?: boolean;
+  platform?: string;
 }): Promise<RegisterAccountResponse> {
   console.log('[onboarding] registerPersonalAccount - Request');
 
@@ -54,7 +55,7 @@ export async function registerPersonalAccount(input: {
       first_name: input.first_name,
       last_name: input.last_name,
       accept_terms: input.accept_terms ?? true,
-      platform: 'eopsentre',
+      platform: input.platform || 'eopsentre',
     });
 
     if (response.success && response.data) {

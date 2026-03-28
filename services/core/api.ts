@@ -17,11 +17,13 @@ export interface PaginatedResponse<T> {
   results: T[];
 }
 
-// Backend Base URLs - Client Management Backend (Port 8001) for registration flow
+// Backend Base URLs
+// - WELLONGE_ID: Primary backend at apitestweb.eopsentre.com (auth, accounts, organizations)
+// - EOPSENTRE/WELLONGEPAY: Client Management backend (port 8001, plans, pricing, clients)
 export const BACKEND_URLS = {
   WELLONGE_ID: {
-    BASE_URL: process.env.NEXT_PUBLIC_CLIENT_MGMT_URL || 'http://localhost:8001',
-    REST_API: (process.env.NEXT_PUBLIC_CLIENT_MGMT_URL || 'http://localhost:8001') + '/api',
+    BASE_URL: process.env.NEXT_PUBLIC_REST_API_URL || 'https://apitestweb.eopsentre.com',
+    REST_API: process.env.NEXT_PUBLIC_REST_API_URL || 'https://apitestweb.eopsentre.com',
   },
   WELLONGEPAY: {
     BASE_URL: process.env.NEXT_PUBLIC_CLIENT_MGMT_URL || 'http://localhost:8001',
@@ -159,11 +161,11 @@ class BaseApiService {
       });
 
       let result;
+      const rawText = await response.text(); // read once
       try {
-        result = await response.json();
+        result = rawText ? JSON.parse(rawText) : {};
       } catch (parseError) {
-        const text = await response.text();
-        throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+        throw new Error(`HTTP ${response.status}: ${rawText || response.statusText}`);
       }
 
       if (!response.ok) {

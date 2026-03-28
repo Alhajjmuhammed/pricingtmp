@@ -32,7 +32,7 @@ export default function PricingPage() {
         }
       } catch (err) {
         console.error('Failed to fetch pricing plans:', err)
-        setError('Unable to load pricing plans. Please make sure the backend is running on port 8000.')
+        setError('Unable to load pricing plans. Please make sure the backend is running on port 8000 (Wellongepay) or check NEXT_PUBLIC_PRICING_GRAPHQL_URL in .env.local.')
       } finally {
         setIsLoading(false)
       }

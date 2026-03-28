@@ -236,3 +236,100 @@ export interface AddOn {
   pricingPeriod: string;
   isActive: boolean;
 }
+
+// ============ CLIENT DRAFT MUTATION ============
+
+export const SAVE_CLIENT_DRAFT = `
+  mutation SaveClientDraft($input: ClientDraftInput!) {
+    saveClientDraft(input: $input) {
+      success
+      message
+      client {
+        id
+        name
+        primaryEmail
+        registrationSource
+      }
+    }
+  }
+`
+
+export interface ClientFeatureSelectionInput {
+  slug: string
+  quantity?: number
+  customPrice?: number
+}
+
+export interface ClientSubFeatureSelectionInput {
+  featureSlug: string
+  subFeatureSlug: string
+  isEnabled: boolean
+  customPrice?: number
+}
+
+export interface ClientAddonSelectionInput {
+  slug: string
+  quantity?: number
+  customPrice?: number
+}
+
+export interface ClientDraftInput {
+  firstName?: string
+  lastName?: string
+  primaryEmail?: string
+  primaryPhone?: string
+  phoneCountryCode?: string
+  whatsappEnabled?: boolean
+  birthDate?: string | null
+  isPriorUser?: boolean
+  jobTitle?: string
+  name?: string
+  legalName?: string
+  businessDomain?: string
+  businessType?: string
+  organizationCount?: number
+  companySize?: string
+  industry?: string
+  street?: string
+  city?: string
+  state?: string
+  postCode?: string
+  country?: string
+  currency?: string
+  taxId?: string
+  taxRate?: number
+  billingName?: string
+  billingAddress?: string
+  cardBrand?: string
+  cardLast4?: string
+  cardExpiry?: string
+  selectedServices?: string[]
+  selectedFeatures?: string[]
+  selectedAddons?: string[]
+  featureSelections?: ClientFeatureSelectionInput[]
+  subfeatureSelections?: ClientSubFeatureSelectionInput[]
+  addonSelections?: ClientAddonSelectionInput[]
+  userCount?: number
+  assetCount?: number
+  storageGb?: number
+  assetPrice?: number
+  storagePrice?: number
+  billingPeriod?: string
+  yearlyDiscount?: number
+  notes?: string
+  registrationSource?: string
+  personalAccountId?: string
+}
+
+export interface SaveClientDraftResult {
+  saveClientDraft: {
+    success: boolean
+    message: string
+    client?: {
+      id: number
+      name: string
+      primaryEmail: string
+      registrationSource?: string
+    }
+  }
+}

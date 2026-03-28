@@ -1,21 +1,17 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { CheckCircle2, Download, ArrowRight, Mail, Building2 } from "lucide-react"
+import { CheckCircle2, ArrowRight, Mail, Building2, User, Briefcase } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
 export default function SuccessPage() {
   const [registrationData, setRegistrationData] = useState<any>(null)
-  const [paymentData, setPaymentData] = useState<any>(null)
 
   useEffect(() => {
     const regData = localStorage.getItem('registration_data')
-    const payData = localStorage.getItem('payment_data')
-    
     if (regData) setRegistrationData(JSON.parse(regData))
-    if (payData) setPaymentData(JSON.parse(payData))
   }, [])
 
   return (
@@ -26,16 +22,25 @@ export default function SuccessPage() {
             <CheckCircle2 className="h-10 w-10" />
           </div>
 
-          <h1 className="text-3xl font-bold mb-3">Payment Successful!</h1>
+          <h1 className="text-3xl font-bold mb-3">Account Created!</h1>
           <p className="text-muted-foreground text-lg mb-8">
             Welcome to eOpsEntre Platform
           </p>
 
           <div className="bg-muted/30 rounded-lg p-6 mb-8 space-y-3 text-left">
             <div className="flex items-start gap-3">
+              <User className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <div>
+                <p className="text-sm text-muted-foreground">Account holder</p>
+                <p className="font-medium">
+                  {registrationData?.firstName} {registrationData?.lastName}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
               <Mail className="h-5 w-5 text-muted-foreground mt-0.5" />
               <div>
-                <p className="text-sm text-muted-foreground">Confirmation sent to</p>
+                <p className="text-sm text-muted-foreground">Email</p>
                 <p className="font-medium">{registrationData?.email}</p>
               </div>
             </div>
@@ -46,15 +51,26 @@ export default function SuccessPage() {
                 <p className="font-medium">{registrationData?.orgName}</p>
               </div>
             </div>
-            {paymentData?.transactionId && (
+            {registrationData?.industry && (
               <div className="flex items-start gap-3">
-                <CheckCircle2 className="h-5 w-5 text-muted-foreground mt-0.5" />
+                <Briefcase className="h-5 w-5 text-muted-foreground mt-0.5" />
                 <div>
-                  <p className="text-sm text-muted-foreground">Transaction ID</p>
-                  <p className="font-mono text-sm">{paymentData.transactionId}</p>
+                  <p className="text-sm text-muted-foreground">Industry</p>
+                  <p className="font-medium capitalize">{registrationData.industry}</p>
                 </div>
               </div>
             )}
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <div>
+                <p className="text-sm text-muted-foreground">Plan</p>
+                <p className="font-medium capitalize">
+                  {registrationData?.registrationSource === 'pricing_package' ? 'Pre-built Package' : 'Custom Plan'}
+                  {' Â· '}
+                  {registrationData?.billingPeriod === 'yearly' ? 'Annual billing' : 'Monthly billing'}
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -66,9 +82,8 @@ export default function SuccessPage() {
             </Button>
 
             <Button variant="outline" className="w-full" size="lg" asChild>
-              <Link href="/" className="flex items-center justify-center gap-2">
-                <Download className="h-4 w-4" />
-                Download Receipt
+              <Link href="/">
+                Back to Pricing
               </Link>
             </Button>
           </div>
@@ -77,27 +92,21 @@ export default function SuccessPage() {
             <h3 className="font-semibold mb-3">What's Next?</h3>
             <div className="grid gap-3 text-left">
               <div className="flex gap-3 p-3 bg-muted/20 rounded-lg">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                  1
-                </div>
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">1</div>
                 <div>
                   <p className="font-medium text-sm">Check your email</p>
-                  <p className="text-xs text-muted-foreground">We've sent login credentials and setup instructions</p>
+                  <p className="text-xs text-muted-foreground">We've sent setup instructions to {registrationData?.email}</p>
                 </div>
               </div>
               <div className="flex gap-3 p-3 bg-muted/20 rounded-lg">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                  2
-                </div>
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">2</div>
                 <div>
                   <p className="font-medium text-sm">Complete your profile</p>
                   <p className="text-xs text-muted-foreground">Add team members and configure your workspace</p>
                 </div>
               </div>
               <div className="flex gap-3 p-3 bg-muted/20 rounded-lg">
-                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                  3
-                </div>
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">3</div>
                 <div>
                   <p className="font-medium text-sm">Start using eOpsEntre</p>
                   <p className="text-xs text-muted-foreground">Access all features based on your selected plan</p>

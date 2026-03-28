@@ -134,8 +134,11 @@ export default function CustomizePlanPage() {
           if (raw) savedData = JSON.parse(raw)
         } catch { /* ignore parse errors */ }
 
-        if (savedData?.activeModules) {
-          // Returning user — restore all selections, merging with currently available modules
+        const cameFromRegister =
+          typeof document !== "undefined" && document.referrer.includes("/register")
+
+        if (savedData?.activeModules && cameFromRegister) {
+          // Returning from register — restore selections, merging with currently available modules
           const restoredActive: Record<string, boolean> = {}
           transformedModules.forEach(mod => {
             restoredActive[mod.id] = savedData.activeModules[mod.id] ?? false
@@ -147,12 +150,17 @@ export default function CustomizePlanPage() {
           if (savedData.counts) setCounts(savedData.counts)
           restoredFromLocalStorage.current = true
         } else {
-          // Fresh visit — start with all modules inactive
+          // Fresh visit (or direct open) — start with all modules inactive
           const newActiveModules: Record<string, boolean> = {}
           transformedModules.forEach(mod => {
             newActiveModules[mod.id] = false
           })
           setActiveModules(newActiveModules)
+          setSelectedItems({})
+          setSelectedSubFeatures({})
+          setSelectedAddOns({})
+          setCounts(DEFAULT_COUNTS)
+          restoredFromLocalStorage.current = false
         }
       }
     } catch (error) {
