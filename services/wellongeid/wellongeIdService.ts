@@ -2,7 +2,7 @@
  * Wellonge ID REST API Service
  */
 
-import { wellongeIdApiService, ApiResponse } from '../core/api';
+import { wellongeIdApiService, localOtpApiService, ApiResponse } from '../core/api';
 
 export interface RegisterPersonalAccountInput {
   email: string;
@@ -182,7 +182,8 @@ export async function requestEmailVerificationCode(
   email: string,
   platform?: string
 ): Promise<ApiResponse<any>> {
-  return await wellongeIdApiService.post('/v1/auth/verify/email/', {
+  // Use local backend (localhost:8001) for OTP during development
+  return await localOtpApiService.post('/v1/auth/verify/email/', {
     email,
     platform: platform || 'eopsentre',
   });
@@ -192,7 +193,8 @@ export async function verifyEmailCode(
   code: string,
   email?: string
 ): Promise<ApiResponse<any>> {
-  return await wellongeIdApiService.post('/v1/auth/verify/code/', {
+  // Use local backend (localhost:8001) for OTP during development
+  return await localOtpApiService.post('/v1/auth/verify/code/', {
     code,
     verification_type: 'email',
     contact_value: email,
@@ -203,7 +205,8 @@ export async function resendEmailVerificationCode(
   email?: string,
   platform?: string
 ): Promise<ApiResponse<any>> {
-  return await wellongeIdApiService.post('/v1/auth/verify/resend/', {
+  // Use local backend (localhost:8001) for OTP during development
+  return await localOtpApiService.post('/v1/auth/verify/resend/', {
     verification_type: 'email',
     contact_value: email,
     platform: platform || 'eopsentre',

@@ -314,6 +314,7 @@ export default function RegisterPage() {
   const [otpValue, setOtpValue] = useState("")
   const [otpSending, setOtpSending] = useState(false)
   const [otpVerifying, setOtpVerifying] = useState(false)
+  const [otpLimitReached, setOtpLimitReached] = useState(false)
   const [resendCooldown, setResendCooldown] = useState(0)
 
   // Handle inline save with validation
@@ -641,9 +642,14 @@ export default function RegisterPage() {
     setError("")
     setOtpSending(true)
     try {
-      await requestEmailVerificationCode(email, 'eopsentre')
+      const result = await requestEmailVerificationCode(email, 'eopsentre')
+      if (!result.success) {
+        if ((result.data as any)?.rate_limited) setOtpLimitReached(true)
+        setError(result.message || "Failed to send OTP. Please try again.")
+        return
+      }
       setEmailStep('otp')
-      setResendCooldown(60)
+      setResendCooldown(180)
     } catch (err: any) {
       setError(err?.message || "Failed to send OTP. Please try again.")
     } finally {
@@ -659,7 +665,11 @@ export default function RegisterPage() {
     setError("")
     setOtpVerifying(true)
     try {
-      await verifyEmailCode(otpValue, email)
+      const result = await verifyEmailCode(otpValue, email)
+      if (!result.success) {
+        setError(result.message || "Invalid or expired code. Please try again.")
+        return
+      }
       setEmailStep('form')
       setOtpValue("")
     } catch (err: any) {
@@ -672,8 +682,13 @@ export default function RegisterPage() {
   const handleResendOtp = async () => {
     if (resendCooldown > 0) return
     try {
-      await resendEmailVerificationCode(email, 'eopsentre')
-      setResendCooldown(60)
+      const result = await resendEmailVerificationCode(email, 'eopsentre')
+      if (!result.success) {
+        if ((result.data as any)?.rate_limited) setOtpLimitReached(true)
+        setError(result.message || "Failed to resend code.")
+        return
+      }
+      setResendCooldown(180)
       setError("")
     } catch (err: any) {
       setError(err?.message || "Failed to resend code.")
@@ -1161,8 +1176,10 @@ export default function RegisterPage() {
                 </Button>
                 <div className="text-center text-sm text-muted-foreground">
                   Didn&apos;t receive it?{" "}
-                  {resendCooldown > 0 ? (
-                    <span>Resend in {resendCooldown}s</span>
+                  {otpLimitReached ? (
+                    <span className="text-destructive font-medium">Max attempts reached. Try again in 30 min.</span>
+                  ) : resendCooldown > 0 ? (
+                    <span>Resend in {Math.floor(resendCooldown / 60)}:{String(resendCooldown % 60).padStart(2, '0')}</span>
                   ) : (
                     <button
                       type="button"

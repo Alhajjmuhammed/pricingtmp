@@ -193,5 +193,7 @@ class BaseApiService {
 export const baseApiService = new BaseApiService();
 export const wellongeIdApiService = new BaseApiService(BACKEND_URLS.WELLONGE_ID.REST_API);
 export const wellongepayApiService = new BaseApiService(BACKEND_URLS.WELLONGEPAY.REST_API);
+// Local OTP service - uses local backend (port 8001) for email verification during development
+export const localOtpApiService = new BaseApiService(BACKEND_URLS.EOPSENTRE.BASE_URL);
 
 export default BaseApiService;
