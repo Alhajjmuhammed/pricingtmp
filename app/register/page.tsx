@@ -368,6 +368,20 @@ export default function RegisterPage() {
   const fetchServices = async () => {
     try {
       setIsLoadingServices(true)
+      
+      // Check if Client Management backend (Port 8001) is available
+      const healthCheck = await fetch(process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:8001/graphql/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ __typename }' }),
+      }).catch(() => null)
+      
+      if (!healthCheck || !healthCheck.ok) {
+        console.warn('[Services] Client Management backend (Port 8001) not available. Skipping services fetch.')
+        setIsLoadingServices(false)
+        return
+      }
+      
       const data = await graphqlRequest<{ serviceCategories: ServiceCategory[] }>(
         GET_SERVICE_CATEGORIES
       )
@@ -446,8 +460,9 @@ export default function RegisterPage() {
           }
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch services:', err)
+    } catch (err: any) {
+      console.warn('[Services] Failed to fetch services from Port 8001 (non-critical):', err?.message || err)
+      // Non-blocking error - services are only needed for custom plan editing
     } finally {
       setIsLoadingServices(false)
     }
@@ -560,9 +575,27 @@ export default function RegisterPage() {
     return monthly
   }
 
-  // Fetch services on mount
+  // Fetch services on mount (only if customization data exists)
   useEffect(() => {
-    if (services.length === 0) {
+    // Only fetch services if user has customization data (custom plan)
+    const customData = localStorage.getItem('customization_data')
+    const selectedPlan = localStorage.getItem('selected_plan')
+    
+    // Skip if user selected a pre-built plan (has planId)
+    if (selectedPlan) {
+      try {
+        const planData = JSON.parse(selectedPlan)
+        if (planData.planId) {
+          console.log('[Services] Pre-built plan detected, skipping services fetch')
+          return // Don't fetch services for pre-built plans
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+    
+    // Only fetch if we have custom data OR no services loaded yet
+    if ((customData || services.length === 0)) {
       fetchServices()
     }
   }, [])
@@ -781,6 +814,66 @@ export default function RegisterPage() {
     setError("")
 
     try {
+      // STEP 0: Verify NBC Card BEFORE registration
+      console.log('🔐 [NBC] Verifying card before registration...')
+      
+      const [expiryMonth, expiryYear] = cardExpiry.split('/')
+      const verificationPayload = {
+        card_number: rawCard,
+        card_holder: billingName,
+        expiry_month: expiryMonth,
+        expiry_year: expiryYear,
+        cvv: cardCvv
+      }
+      
+      let nbcCardToken = ''
+      let nbcOrderReference = ''
+      
+      try {
+        const verifyResponse = await fetch(process.env.NEXT_PUBLIC_NBC_VERIFY_CARD_URL || 'http://localhost:8000/api/payments/ngenius/verify-card/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(verificationPayload)
+        })
+        
+        const verifyResult = await verifyResponse.json()
+        
+        console.log('[NBC] Verification result:', {
+          valid: verifyResult.valid,
+          sufficient_balance: verifyResult.sufficient_balance,
+          message: verifyResult.message
+        })
+        
+        // Check card validity
+        if (!verifyResult.valid) {
+          setError("Invalid card. Please check your card details and try again.")
+          setLoading(false)
+          return
+        }
+        
+        // Check balance
+        if (!verifyResult.sufficient_balance) {
+          setError("Insufficient balance. Please add at least $5 to your card and try again.")
+          setLoading(false)
+          return
+        }
+        
+        // Capture NBC token for later use
+        nbcCardToken = verifyResult.card_token || ''
+        nbcOrderReference = verifyResult.order_reference || ''
+        
+        // Card verified successfully
+        console.log('✅ [NBC] Card verified successfully, token captured:', nbcCardToken ? 'YES' : 'NO')
+        
+      } catch (verifyError: any) {
+        console.error('❌ [NBC] Card verification failed:', verifyError)
+        setError("Card verification failed. Please check your card details and try again.")
+        setLoading(false)
+        return
+      }
+
       console.log('🔵 [Register] Creating account with all collected data...')
 
       // Determine registration source based on selected plan type
@@ -879,6 +972,45 @@ export default function RegisterPage() {
         return
       }
       console.log('✅ Organization created, ID:', orgResponse.data.id)
+
+      // Step 3.5: Save Payment Method to Wellongepay
+      console.log('📝 Step 3.5: Saving payment method to Wellongepay...')
+      try {
+        const savePaymentMethodPayload = {
+          personal_account_id: newAccountId,
+          card_number: rawCard,
+          card_holder: billingName,
+          expiry_month: expiryMonth,
+          expiry_year: expiryYear,
+          cvv: cardCvv,
+          card_brand: cardBrand || 'unknown',
+          billing_address: billingAddress,
+          billing_city: billingCity,
+          billing_country: billingCountry,
+          billing_postal_code: '',
+          nbc_card_token: nbcCardToken,
+          nbc_order_reference: nbcOrderReference
+        }
+
+        const savePaymentResponse = await fetch(process.env.NEXT_PUBLIC_NBC_SAVE_PAYMENT_URL || 'http://localhost:8000/api/payments/ngenius/save-payment-method/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(savePaymentMethodPayload)
+        })
+
+        const savePaymentResult = await savePaymentResponse.json()
+
+        if (savePaymentResult.success) {
+          console.log('✅ Payment method saved, ID:', savePaymentResult.payment_method_id, 'Wallet ID:', savePaymentResult.wallet_id)
+        } else {
+          console.warn('⚠️ Payment method save failed (non-blocking):', savePaymentResult.message)
+        }
+      } catch (paymentSaveError: any) {
+        // Non-blocking - account already created
+        console.warn('⚠️ Could not save payment method (non-blocking):', paymentSaveError?.message)
+      }
 
       // Step 4: Save client record to management backend (non-blocking)
       console.log('📝 Step 4: Saving client to management backend...')
