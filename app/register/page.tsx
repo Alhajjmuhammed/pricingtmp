@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
 import { registerPersonalAccount, createPersonalProfile, createOrganization, requestEmailVerificationCode, verifyEmailCode, resendEmailVerificationCode } from "@/services"
+import { syncUserToWellongeId } from "@/services/wellongeid/wellongeIdSyncService"
 import { 
   graphqlRequest, 
   GET_SERVICE_CATEGORIES,
@@ -1103,6 +1104,32 @@ export default function RegisterPage() {
       } catch (clientErr: any) {
         // Non-blocking — account is already created, registration continues
         console.warn('⚠️ Could not save client to management backend (non-blocking):', clientErr?.message)
+      }
+
+      // Step 5: Mirror user to Wellonge ID (port 8002) — non-blocking
+      console.log('📝 Step 5: Syncing user to Wellonge ID (port 8002)...')
+      try {
+        await syncUserToWellongeId({
+          email,
+          password,
+          firstName,
+          lastName,
+          phoneNumber: `${countryCode}${phoneNumber}`,
+          country,
+          jobTitle,
+          dateOfBirth: dateOfBirth || undefined,
+          orgName,
+          orgSlug,
+          industry,
+          orgSize,
+          organizationType,
+          platform: registrationPlatform,
+          personalAccountId: newAccountId,
+        })
+        console.log('✅ User synced to Wellonge ID')
+      } catch (syncErr: any) {
+        // Non-blocking — registration already succeeded
+        console.warn('⚠️ Could not sync user to Wellonge ID (non-blocking):', syncErr?.message)
       }
 
       // All steps completed — store data for success page and redirect
