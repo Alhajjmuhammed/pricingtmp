@@ -9,6 +9,9 @@ import {
   createOrganization as wellongeIdCreateOrganization,
 } from '../wellongeid/wellongeIdService';
 
+// loginPersonalAccount is used as-is from wellongeIdService (re-exported
+// via services/index.ts) -- no wrapping needed here.
+
 import {
   processPayment as wellongepayProcessPayment,
   checkPaymentStatus as wellongepayCheckStatus,
@@ -112,7 +115,7 @@ export async function createPersonalProfile(input: {
   preferred_contact?: string;
   headline?: string;
   bio?: string;
-}): Promise<{
+}, accessToken?: string): Promise<{
   success: boolean;
   data?: any;
   error?: string;
@@ -128,7 +131,7 @@ export async function createPersonalProfile(input: {
       preferred_contact: input.preferred_contact,
       headline: input.headline,
       bio: input.bio,
-    });
+    }, accessToken);
 
     return {
       success: response.success,
@@ -181,7 +184,7 @@ export async function createOrganization(input: {
   personal_account_owner_id: string;
   primary_email?: string;
   primary_phone?: string;
-}): Promise<{
+}, accessToken?: string): Promise<{
   success: boolean;
   data?: any;
   error?: string;
@@ -198,7 +201,7 @@ export async function createOrganization(input: {
       personal_account_owner_id: input.personal_account_owner_id,
       primary_email: input.primary_email,
       primary_phone: input.primary_phone,
-    });
+    }, accessToken);
 
     return {
       success: response.success,

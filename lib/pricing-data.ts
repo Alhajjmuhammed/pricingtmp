@@ -7,6 +7,10 @@ export type Plan = {
   badge?: string
   highlighted?: boolean
   features: string[]
+  // Feature (module) groupings this package actually includes -- what a
+  // destination product needs to gate dashboard access to only what was
+  // purchased. Distinct from `features` above (individual line-item names).
+  moduleNames?: string[]
   previousPlan?: string
   cta: string
   ctaVariant: "default" | "outline"

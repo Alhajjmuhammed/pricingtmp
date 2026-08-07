@@ -29,10 +29,9 @@ function AddOnCard({
         <Switch checked={isSelected} onCheckedChange={onToggle} />
       </div>
 
-      <div 
-        className="text-sm leading-relaxed text-muted-foreground mb-5 flex-1 prose prose-sm max-w-none"
-        dangerouslySetInnerHTML={{ __html: addOn.desc }}
-      />
+      <p className="text-sm leading-relaxed text-muted-foreground mb-5 flex-1">
+        {addOn.desc}
+      </p>
 
       <div className="flex items-end justify-between pt-4 border-t border-border">
         <div>
@@ -91,36 +90,40 @@ export function AddOnsSection({
   }
 
   return (
-    <section className="mx-auto max-w-7xl px-4 py-16">
-      <div className="text-center mb-12">
-        <h2 className="text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+    <section className="mx-auto max-w-7xl px-4 py-12 sm:py-16">
+      <div className="text-center mb-8 sm:mb-12">
+        <h2 className="text-2xl font-bold tracking-tight text-balance sm:text-3xl lg:text-4xl">
           Supercharge your plan with add-ons
         </h2>
-        <p className="mt-3 text-muted-foreground text-lg">
+        <p className="mt-3 text-sm text-muted-foreground sm:text-base lg:text-lg">
           Extend your capabilities with powerful tools for every service module.
         </p>
       </div>
 
       <Tabs defaultValue={firstActiveModule} className="w-full">
-        <TabsList className={`grid w-full mb-8 h-auto p-1 bg-muted/50`} style={{ gridTemplateColumns: `repeat(${Object.keys(addOnsByModule).length}, 1fr)` }}>
-          {Object.keys(addOnsByModule).map(moduleId => (
-            <TabsTrigger 
-              key={moduleId}
-              value={moduleId} 
-              className="text-sm font-semibold py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-            >
-              {moduleId}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        {/* Horizontally scrollable on narrow screens instead of squishing
+            into equal columns -- feature names can be long. */}
+        <div className="mb-8 -mx-4 px-4 overflow-x-auto sm:mx-0 sm:px-0">
+          <TabsList className="flex w-max min-w-full h-auto p-1 bg-muted/50 sm:grid" style={{ gridTemplateColumns: `repeat(${Object.keys(addOnsByModule).length}, 1fr)` }}>
+            {Object.keys(addOnsByModule).map(moduleId => (
+              <TabsTrigger
+                key={moduleId}
+                value={moduleId}
+                className="text-sm font-semibold py-3 px-4 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+              >
+                {moduleId}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
         {Object.entries(addOnsByModule).map(([moduleId, moduleAddOns]) => (
           <TabsContent key={moduleId} value={moduleId} className="mt-6">
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
               {moduleAddOns.map((addOn) => (
-                <AddOnCard 
-                  key={addOn.id} 
-                  addOn={addOn} 
+                <AddOnCard
+                  key={addOn.id}
+                  addOn={addOn}
                   isAnnual={isAnnual}
                   isSelected={!!selectedAddOns[addOn.id]}
                   onToggle={() => onToggleAddOn(addOn.id)}

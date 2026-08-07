@@ -19,7 +19,7 @@ export type ModuleItem = {
   name: string
   desc: string
   price: number
-  per?: "user" | "gb" | "asset"
+  per?: "user" | "gb" | "asset" | "flat"
   subFeatures?: SubFeature[]  // Support for sub-features
 }
 

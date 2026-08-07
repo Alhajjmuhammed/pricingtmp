@@ -30,18 +30,66 @@ import {
   type ModuleItem,
 } from "@/lib/customize-data"
 import { CustomizeSidebar } from "@/components/customize/customize-sidebar"
-import { ModuleCard } from "@/components/customize/module-card"
+import { FeatureList } from "@/components/customize/feature-list"
 import { InvoiceSummary } from "@/components/customize/invoice-summary"
 import { ThemeToggleFloating } from "@/components/theme-toggle"
 import { AddOnsSection } from "@/components/add-ons-section"
-import { 
-  graphqlRequest, 
-  GET_SERVICE_CATEGORIES,
-  type ServiceCategory 
+import { CategorySelector } from "@/components/category-selector"
+import {
+  billingGraphqlRequest,
+  GET_PUBLIC_CATALOG,
+  GET_PUBLIC_PLANS,
+  type PublicFeature,
+  type PublicPlan,
 } from "@/lib/graphql-client"
+import { filterCategoriesByParam, getCategoryParam } from "@/lib/category-filter"
 
 export default function CustomizePlanPage() {
   const router = useRouter()
+
+  // Which business-line Plan (Tax Compliance / Buyer / Supplier) the
+  // customer is building a custom plan for -- the catalog below is always
+  // scoped to this, so they only ever see Features actually relevant to
+  // what they picked, not the whole tenant-wide catalog mixed together.
+  const [categories, setCategories] = useState<PublicPlan[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<PublicPlan | null>(null)
+  const [isLoadingCategories, setIsLoadingCategories] = useState(true)
+  const [categoriesError, setCategoriesError] = useState<string | null>(null)
+
+  // ?category=tax / ?category=tax,buyer / ?category=all (default) --
+  // same URL filter as the homepage. See lib/category-filter.
+  const visibleCategories = useMemo(
+    () => filterCategoriesByParam(categories, getCategoryParam()),
+    [categories]
+  )
+
+  useEffect(() => {
+    async function fetchCategories() {
+      try {
+        const data = await billingGraphqlRequest<{ publicPlans: PublicPlan[] }>(GET_PUBLIC_PLANS)
+        if (data.publicPlans && data.publicPlans.length > 0) {
+          setCategories(data.publicPlans)
+        } else {
+          setCategoriesError('No categories returned from the API.')
+        }
+      } catch (err) {
+        console.error('Failed to fetch categories:', err)
+        setCategoriesError('Unable to load categories.')
+      } finally {
+        setIsLoadingCategories(false)
+      }
+    }
+    fetchCategories()
+  }, [])
+
+  // Skip the picker if the URL narrowed it down to exactly one category.
+  useEffect(() => {
+    if (selectedCategory) return
+    if (visibleCategories.length === 1) {
+      setSelectedCategory(visibleCategories[0])
+    }
+  }, [visibleCategories, selectedCategory])
+
   const [lang, setLang] = useState<LangKey>("en")
   const [currency, setCurrency] = useState("USD")
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("yearly")
@@ -60,7 +108,6 @@ export default function CustomizePlanPage() {
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, boolean>>({})
   const [counts, setCounts] = useState<Counts>(DEFAULT_COUNTS)
   const [invoiceOpen, setInvoiceOpen] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
   const restoredFromLocalStorage = useRef(false)
   const VAT_RATE = 0.18
 
@@ -78,47 +125,38 @@ export default function CustomizePlanPage() {
       setIsLoadingModules(true)
       setModulesError(null)
 
-      const data = await graphqlRequest<{ serviceCategories: ServiceCategory[] }>(
-        GET_SERVICE_CATEGORIES
+      const data = await billingGraphqlRequest<{ publicCatalog: PublicFeature[] }>(
+        GET_PUBLIC_CATALOG,
+        { planId: selectedCategory?.id }
       )
 
-      // Transform backend data to Module format
-      const transformedModules: Module[] = data.serviceCategories
-        .filter(service => service.isActive)
+      // Transform the catalog (Feature -> SubFeature/Addon, flat -- pricing
+      // only ever lives on the SubFeature/Addon, never on the Feature
+      // itself) to Module format. Each SubFeature becomes a directly
+      // priced, directly selectable item -- there's no third nesting
+      // level in the new catalog the way there used to be.
+      const transformedModules: Module[] = data.publicCatalog
         .sort((a, b) => a.sortOrder - b.sortOrder)
-        .map(service => ({
-          id: service.name, // Use name as ID for activeModules compatibility
-          name: service.name,
-          items: (service.features || [])
-            .filter(f => f.isActive)
-            .map(feature => {
-              // Determine pricing unit
-              let per: "user" | "gb" | "asset" | undefined = undefined
-              if (feature.pricingUnit === 'per_user') per = 'user'
-              else if (feature.pricingUnit === 'per_gb') per = 'gb'
-              else if (feature.pricingUnit === 'per_asset') per = 'asset'
-
-              return {
-                id: feature.slug,
-                name: feature.name,
-                desc: feature.description,
-                price: Number(feature.price) || 0,
-                per,
-                subFeatures: (feature.subFeatures || []).map(sf => ({
-                  id: sf.slug,
-                  name: sf.name,
-                  desc: sf.description,
-                  price: Number(sf.price) || 0,
-                  isDefaultEnabled: sf.isDefaultEnabled,
-                })),
-              }
-            }),
-          addons: (service.addons || []).map(addon => ({
-            id: addon.slug,
+        .map(feature => ({
+          id: feature.name, // Use name as ID for activeModules compatibility
+          name: feature.name,
+          items: feature.subFeatures.map(sf => {
+            const per: "user" | "flat" =
+              sf.billingType === "PER_USER" || sf.billingType === "PER_DEVICE" ? "user" : "flat"
+            return {
+              id: sf.id,
+              name: sf.name,
+              desc: sf.description,
+              price: Number(sf.price) || 0,
+              per,
+            }
+          }),
+          addons: feature.addons.map(addon => ({
+            id: addon.id,
             name: addon.name,
             desc: addon.description,
-            price: Number(addon.price) || 0,
-            pricingPeriod: addon.pricingPeriod || 'monthly',
+            price: Number(addon.unitPrice) || 0,
+            pricingPeriod: addon.billingType === "ANNUAL" ? "yearly" : "monthly",
           })),
         }))
 
@@ -171,10 +209,12 @@ export default function CustomizePlanPage() {
     }
   }
 
-  // Fetch data on mount
+  // Fetch the catalog once a category (business-line Plan) is chosen, and
+  // again if the customer switches category.
   useEffect(() => {
+    if (!selectedCategory) return
     fetchServicesData()
-  }, [])
+  }, [selectedCategory])
 
   // Initialize items as NOT selected by default (skip if state was restored from localStorage)
   useEffect(() => {
@@ -188,6 +228,17 @@ export default function CustomizePlanPage() {
     setSelectedItems(initial)
     setSelectedSubFeatures({})
   }, [modules])
+
+  // A Feature is "active" for pricing/submission purposes whenever at
+  // least one of its SubFeatures is selected -- there's no separate
+  // manual "turn this Feature on" step in this flat, single-list UI.
+  useEffect(() => {
+    const derived: Record<string, boolean> = {}
+    modules.forEach((mod) => {
+      derived[mod.id] = mod.items.some((item) => selectedItems[item.id])
+    })
+    setActiveModules(derived)
+  }, [modules, selectedItems])
 
   const formatPrice = useCallback(
     (val: number) => {
@@ -217,10 +268,13 @@ export default function CustomizePlanPage() {
               itemPrice = item.price
             }
 
-            // Apply multiplier based on pricing unit
+            // Apply multiplier based on pricing unit -- "flat" (the
+            // catalog's MONTHLY/ANNUAL/ONE_TIME sub-features/add-ons)
+            // isn't scaled by any count, only PER_USER/PER_DEVICE items are
             if (itemPrice > 0) {
               if (item.per === "gb") monthlyTotal += itemPrice * counts.storage
               else if (item.per === "asset") monthlyTotal += itemPrice * counts.asset
+              else if (item.per === "flat") monthlyTotal += itemPrice
               else monthlyTotal += itemPrice * counts.users
             }
           }
@@ -247,38 +301,22 @@ export default function CustomizePlanPage() {
     return { subtotal: sub, vatAmount: vat, totalCost: sub + vat }
   }, [activeModules, selectedItems, selectedSubFeatures, selectedAddOns, modules, counts, billingCycle, cur, VAT_RATE])
 
-  // Validate that user has selected at least 1 service with 1 feature with 1 sub-feature
+  // Validate that user has selected at least 1 module with 1 item enabled
+  // on it (the catalog is flat -- Feature -> SubFeature/Addon, no third
+  // nesting level -- so "selected item" is already the priced thing)
   const isValidSelection = useMemo(() => {
-    // Must have at least one active module
     const activeModuleNames = Object.keys(activeModules).filter(name => activeModules[name] === true)
     if (activeModuleNames.length === 0) return false
 
-    // For each active module, check if it has a feature with a selected sub-feature
     for (const moduleName of activeModuleNames) {
       const module = modules.find(m => m.name === moduleName)
       if (!module) continue
-
-      // Check if this module has at least one feature with a selected sub-feature
-      for (const feature of module.items) {
-        if (selectedItems[feature.id] !== true) continue // Skip unselected features
-        
-        // Check if this feature has at least one selected sub-feature
-        const hasSubFeature = feature.subFeatures?.some(sf => selectedSubFeatures[sf.id] === true)
-        if (hasSubFeature) return true // Found valid selection!
-      }
+      if (module.items.some(item => selectedItems[item.id] === true)) return true
     }
 
     return false
-  }, [activeModules, selectedItems, selectedSubFeatures, modules])
+  }, [activeModules, selectedItems, modules])
 
-  const scrollCards = (direction: "left" | "right") => {
-    if (!scrollRef.current) return
-    const amount = 380
-    scrollRef.current.scrollBy({
-      left: direction === "left" ? -amount : amount,
-      behavior: "smooth",
-    })
-  }
 
   const handleContinue = () => {
     if (!showAddOns) {
@@ -303,13 +341,50 @@ export default function CustomizePlanPage() {
           vatAmount,
           totalCost,
         },
+        // Business-line category (Tax Compliance / Buyer / Supplier) this
+        // custom build is scoped to -- selected_plan carries this for
+        // pre-built plans, but that key is cleared above, so register/
+        // page.tsx needs it here instead to know which destination system
+        // (if any) to provision the account in.
+        categoryId: selectedCategory?.id,
+        categoryName: selectedCategory?.name,
       }))
       router.push('/register')
     }
   }
 
+  // Gate: pick a category (Tax Compliance / Buyer / Supplier) before
+  // showing any Features/SubFeatures to build a custom plan from — the
+  // catalog fetch above is scoped to whichever one is chosen.
+  if (!selectedCategory) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="px-4 py-6 lg:px-12">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-widest hover:bg-primary/15 transition-all border border-primary/20"
+          >
+            <ChevronLeft className="h-4 w-4" /> Back to pricing
+          </Link>
+        </header>
+        {isLoadingCategories ? (
+          <div className="flex items-center justify-center py-24">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : categoriesError ? (
+          <div className="flex flex-col items-center justify-center gap-4 py-24">
+            <AlertCircle className="h-8 w-8 text-destructive" />
+            <p className="text-sm text-muted-foreground">{categoriesError}</p>
+          </div>
+        ) : (
+          <CategorySelector categories={visibleCategories} onSelect={setSelectedCategory} />
+        )}
+      </div>
+    )
+  }
+
   return (
-    <div className="flex h-screen bg-background font-sans text-foreground overflow-hidden relative">
+    <div className="flex h-screen h-[100dvh] bg-background font-sans text-foreground overflow-hidden relative">
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex w-72 bg-card border-r border-border flex-col p-6 shrink-0">
         <CustomizeSidebar
@@ -333,7 +408,7 @@ export default function CustomizePlanPage() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="font-bold text-primary italic">eOpsEntre</span>
+        <span className="font-bold text-primary italic">eOpsPrimax</span>
         <div className="flex items-center gap-2">
           <ThemeToggleFloating />
           <Link href="/" className="p-2 text-muted-foreground text-xs font-medium">
@@ -343,29 +418,40 @@ export default function CustomizePlanPage() {
       </div>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col relative overflow-y-auto overflow-x-hidden pt-14 lg:pt-0 pb-32">
+      <main className="flex-1 flex flex-col relative overflow-y-auto overflow-x-hidden pt-14 lg:pt-0 pb-40 sm:pb-32">
         {/* Header */}
-        <header className="px-4 py-6 lg:px-12 lg:py-10 lg:pb-6 shrink-0">
+        <header className="relative px-4 py-6 lg:px-12 lg:py-10 lg:pb-6 shrink-0 overflow-hidden">
+          <div className="pointer-events-none absolute inset-0 -z-10">
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 h-[280px] w-[600px] rounded-full bg-primary/5 blur-3xl" />
+          </div>
           <div className="max-w-7xl mx-auto">
             {/* Title and subtitle - at top */}
             <div className="text-center mb-6">
-              <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold text-foreground mb-2 tracking-tight text-balance">
+              <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-bold text-foreground mb-2 tracking-tight text-balance">
                 {t.title}
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground font-medium max-w-lg mx-auto leading-relaxed">
                 {t.subtitle}
               </p>
+              <button
+                onClick={() => setSelectedCategory(null)}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary hover:bg-secondary/80 border border-border text-xs font-semibold text-foreground transition-colors"
+              >
+                {selectedCategory.name}
+                <span className="text-muted-foreground font-normal">· change category</span>
+              </button>
             </div>
 
-            {/* Control row: Back button on left, billing toggle on right */}
-            <div className="flex items-center justify-between gap-4">
+            {/* Control row: Back button on left, billing toggle on right --
+                stacks on narrow screens so the toggle never gets squeezed */}
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <Link
                 href="/"
-                className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-widest hover:bg-primary/15 transition-all border border-primary/20"
+                className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-widest hover:bg-primary/15 transition-all border border-primary/20 shrink-0"
               >
                 <ChevronLeft className="h-4 w-4" /> {t.goBack}
               </Link>
-              
+
               <div className="flex items-center gap-3">
                 <div className="hidden lg:block">
                   <ThemeToggleFloating />
@@ -374,7 +460,7 @@ export default function CustomizePlanPage() {
                   <button
                     onClick={() => setBillingCycle("monthly")}
                     className={cn(
-                      "px-6 sm:px-8 py-2.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+                      "px-4 sm:px-6 lg:px-8 py-2.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
                       billingCycle === "monthly"
                         ? "bg-secondary text-foreground"
                         : "text-muted-foreground"
@@ -385,7 +471,7 @@ export default function CustomizePlanPage() {
                   <button
                     onClick={() => setBillingCycle("yearly")}
                     className={cn(
-                      "px-6 sm:px-8 py-2.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all flex items-center gap-2",
+                      "px-4 sm:px-6 lg:px-8 py-2.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all flex items-center gap-2",
                       billingCycle === "yearly"
                         ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
                         : "text-muted-foreground"
@@ -403,18 +489,13 @@ export default function CustomizePlanPage() {
           </div>
         </header>
 
-        {/* Module cards - horizontal scroll */}
-        <div
-          ref={scrollRef}
-          className={cn(
-            "overflow-x-auto px-4 lg:px-10 py-4 flex items-start gap-4 lg:gap-6 scroll-smooth select-none min-h-[400px]",
-            showAddOns ? "shrink-0" : ""
-          )}
-          style={{ scrollbarWidth: "thin" }}
-        >
+        {/* Features + SubFeatures — a single flat list, always fully
+            visible: pick a Feature's SubFeatures directly, no "activate
+            this feature first" step. */}
+        <div className="py-4 px-4 lg:px-0">
           {/* Loading State */}
           {isLoadingModules && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+            <div className="flex flex-col items-center justify-center gap-4 min-h-[400px] text-center">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm text-muted-foreground">Loading services from backend...</p>
             </div>
@@ -422,7 +503,7 @@ export default function CustomizePlanPage() {
 
           {/* Error State */}
           {!isLoadingModules && modulesError && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[400px]">
+            <div className="flex flex-col items-center justify-center gap-4 min-h-[400px] text-center">
               <AlertCircle className="h-8 w-8 text-destructive" />
               <p className="text-sm text-muted-foreground">{modulesError}</p>
               <button
@@ -436,48 +517,17 @@ export default function CustomizePlanPage() {
             </div>
           )}
 
-          {/* Success State - Show Modules */}
-          {!isLoadingModules && !modulesError && modules.map((mod) => (
-            <ModuleCard
-              key={mod.id}
-              mod={mod}
-              isActive={activeModules[mod.id] ?? false}
+          {/* Success State */}
+          {!isLoadingModules && !modulesError && (
+            <FeatureList
+              modules={modules}
               selectedItems={selectedItems}
-              setSelectedItems={setSelectedItems}
-              selectedSubFeatures={selectedSubFeatures}
-              setSelectedSubFeatures={setSelectedSubFeatures}
-              expandedFeatures={expandedFeatures}
-              setExpandedFeatures={setExpandedFeatures}
+              onToggleItem={(itemId) => setSelectedItems((p) => ({ ...p, [itemId]: !p[itemId] }))}
               billingCycle={billingCycle}
               formatPrice={formatPrice}
               freeLabel={t.free}
-              selectedLabel={t.selected}
-              onToggle={() => setActiveModules((p) => ({ ...p, [mod.id]: !p[mod.id] }))}
             />
-          ))}
-
-
-        </div>
-
-        {/* Scroll navigation */}
-        <div className={cn("px-10 py-6 flex flex-col items-center gap-3 shrink-0")}>
-          <div className="w-full h-1.5 bg-secondary rounded-full max-w-xs relative overflow-hidden">
-            <div className="absolute h-full bg-primary transition-all duration-700 rounded-full w-1/3 left-1/4" />
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => scrollCards("left")}
-              className="p-2.5 text-muted-foreground hover:text-primary transition-colors bg-card rounded-full shadow-sm border border-border"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-            <button
-              onClick={() => scrollCards("right")}
-              className="p-2.5 text-muted-foreground hover:text-primary transition-colors bg-card rounded-full shadow-sm border border-border"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Add-ons Section */}

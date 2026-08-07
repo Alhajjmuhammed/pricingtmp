@@ -38,9 +38,13 @@ function PlanIcon({ planId }: { planId: string }) {
 export function PricingCard({
   plan,
   isAnnual,
+  categoryId,
+  categoryName,
 }: {
   plan: Plan
   isAnnual: boolean
+  categoryId?: string
+  categoryName?: string
 }) {
   const router = useRouter()
   const price = isAnnual ? plan.annualPrice : plan.monthlyPrice
@@ -53,7 +57,13 @@ export function PricingCard({
       price,
       billing: isAnnual ? 'annual' : 'monthly',
       features: plan.features,
+      moduleNames: plan.moduleNames || [],
       description: plan.tagline,
+      // Business-line category (Tax Compliance / Buyer / Supplier) this
+      // package belongs to -- used after payment to decide which
+      // destination system (if any) to also provision the account in.
+      categoryId,
+      categoryName,
     }))
     // Clear any previous custom plan data — user picked a pre-built plan
     localStorage.removeItem('customization_data')
@@ -123,7 +133,7 @@ export function PricingCard({
 
         {/* CTA */}
         <Button
-          onClick={() => handleCTAClick(plan)}
+          onClick={() => handleCTAClick()}
           className={cn(
             "w-full mb-6 font-medium h-11",
             plan.highlighted
@@ -179,15 +189,25 @@ export function PricingCard({
 export function PricingCards({
   plans,
   isAnnual,
+  categoryId,
+  categoryName,
 }: {
   plans: Plan[]
   isAnnual: boolean
+  categoryId?: string
+  categoryName?: string
 }) {
   return (
     <section className="mx-auto max-w-6xl px-4 pb-16">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
         {plans.map((plan) => (
-          <PricingCard key={plan.id} plan={plan} isAnnual={isAnnual} />
+          <PricingCard
+            key={plan.id}
+            plan={plan}
+            isAnnual={isAnnual}
+            categoryId={categoryId}
+            categoryName={categoryName}
+          />
         ))}
       </div>
     </section>

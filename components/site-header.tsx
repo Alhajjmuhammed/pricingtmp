@@ -7,7 +7,7 @@ import { Menu, X, Settings2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/theme-toggle"
 
-export function SiteHeader() {
+export function SiteHeader({ customizeHref = "/customize" }: { customizeHref?: string }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
@@ -51,7 +51,7 @@ export function SiteHeader() {
         {/* Right actions */}
         <div className="hidden md:flex items-center gap-3">
           <ThemeToggle compact />
-          <Link href="/customize">
+          <Link href={customizeHref}>
             <Button variant="outline" size="sm" className="gap-2 border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50">
               <Settings2 className="h-3.5 w-3.5" />
               Customize
@@ -77,7 +77,7 @@ export function SiteHeader() {
               <span className="text-sm font-medium text-muted-foreground">Theme</span>
               <ThemeToggle compact />
             </div>
-            <Link href="/customize">
+            <Link href={customizeHref}>
               <Button variant="outline" className="w-full gap-2 border-primary/30 text-primary">
                 <Settings2 className="h-4 w-4" />
                 Customize Plan

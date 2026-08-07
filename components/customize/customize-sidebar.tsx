@@ -1,6 +1,6 @@
 "use client"
 
-import { Minus, Plus, Languages, Coins } from "lucide-react"
+import { Minus, Plus, Languages, Coins, Users, Boxes, Building2, HardDrive } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggleInline } from "@/components/theme-toggle"
 import {
@@ -15,6 +15,7 @@ import {
 
 function Counter({
   label,
+  icon,
   value,
   onUpdate,
   disableMinus,
@@ -24,6 +25,7 @@ function Counter({
   currencyRate,
 }: {
   label: string
+  icon: React.ReactNode
   value: number
   onUpdate: (delta: number) => void
   disableMinus?: boolean
@@ -33,9 +35,10 @@ function Counter({
   currencyRate: number
 }) {
   return (
-    <div className="flex flex-col gap-1.5 group">
+    <div className="flex flex-col gap-2 group rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/25">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold text-muted-foreground group-hover:text-primary uppercase tracking-wider transition-colors">
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground group-hover:text-primary uppercase tracking-wider transition-colors">
+          <span className="text-primary/70">{icon}</span>
           {label}
         </span>
         <span className="text-[10px] font-bold text-primary/60 tabular-nums">
@@ -50,7 +53,7 @@ function Counter({
         >
           <Minus className="h-3 w-3" />
         </button>
-        <span className="text-xs font-bold text-foreground w-10 text-center tabular-nums">
+        <span className="flex-1 text-xs font-bold text-foreground text-center tabular-nums">
           {value}
         </span>
         <button
@@ -97,7 +100,7 @@ export function CustomizeSidebar({
     <div className="flex flex-col h-full overflow-y-auto pr-2 scrollbar-hide">
       {/* Logo */}
       <div className="flex items-center gap-3 mb-10 px-2">
-        <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
+        <div className="w-10 h-10 bg-gradient-to-br from-primary to-primary/70 rounded-xl flex items-center justify-center shadow-lg shadow-primary/25">
           <span className="text-primary-foreground font-black text-xl italic leading-none">e</span>
         </div>
         <div className="leading-tight">
@@ -107,54 +110,15 @@ export function CustomizeSidebar({
       </div>
 
       <div className="mb-8 px-2 space-y-6">
-        {/* Modules */}
-        <div>
-          <h3 className="text-[10px] font-bold text-muted-foreground uppercase mb-4 tracking-widest">
-            {t.modules}
-          </h3>
-          <div className="space-y-2.5">
-            {Object.keys(activeModules).map((id) => (
-              <div key={id} className="flex items-center justify-between group">
-                <span
-                  className={cn(
-                    "text-sm transition-colors cursor-pointer",
-                    activeModules[id] ? "text-foreground font-bold" : "text-muted-foreground"
-                  )}
-                  onClick={() => setActiveModules((p) => ({ ...p, [id]: !p[id] }))}
-                >
-                  {id}
-                </span>
-                <button
-                  onClick={() => setActiveModules((p) => ({ ...p, [id]: !p[id] }))}
-                  className={cn(
-                    "w-9 h-5 rounded-full relative transition-all duration-200",
-                    activeModules[id]
-                      ? "bg-primary shadow-sm shadow-primary/25"
-                      : "bg-border"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "absolute top-0.5 w-4 h-4 rounded-full transition-all duration-300 shadow-sm",
-                      activeModules[id]
-                        ? "right-0.5 bg-primary-foreground"
-                        : "left-0.5 bg-card"
-                    )}
-                  />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
         {/* Plan Scale */}
-        <div className="pt-6 border-t border-border">
+        <div className="pt-0 border-t-0 border-border">
           <h3 className="text-[10px] font-bold text-muted-foreground uppercase mb-4 tracking-widest">
             {t.scale}
           </h3>
-          <div className="space-y-5">
+          <div className="space-y-3">
             <Counter
               label={t.users}
+              icon={<Users className="h-3.5 w-3.5" />}
               price={UNIT_PRICES.user}
               currencySymbol={cur.symbol}
               currencyRate={cur.rate}
@@ -163,6 +127,7 @@ export function CustomizeSidebar({
             />
             <Counter
               label={t.assets}
+              icon={<Boxes className="h-3.5 w-3.5" />}
               price={UNIT_PRICES.asset}
               currencySymbol={cur.symbol}
               currencyRate={cur.rate}
@@ -173,6 +138,7 @@ export function CustomizeSidebar({
             />
             <Counter
               label={t.organization}
+              icon={<Building2 className="h-3.5 w-3.5" />}
               price={UNIT_PRICES.organization}
               currencySymbol={cur.symbol}
               currencyRate={cur.rate}
@@ -181,6 +147,7 @@ export function CustomizeSidebar({
             />
             <Counter
               label={t.storage}
+              icon={<HardDrive className="h-3.5 w-3.5" />}
               price={UNIT_PRICES.storage}
               currencySymbol={cur.symbol}
               currencyRate={cur.rate}

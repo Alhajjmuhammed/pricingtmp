@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { type FeatureValue } from "@/lib/pricing-data"
-import { pricingGraphqlRequest, GET_FEATURE_COMPARISON, GET_PRICING_PLANS } from "@/lib/graphql-client"
+import { billingGraphqlRequest, GET_FEATURE_COMPARISON, GET_PRICING_PLANS } from "@/lib/graphql-client"
 
 // Types for transformed data
 type Plan = {
@@ -173,18 +173,18 @@ export function ComparePlansModal({
     setLoading(true)
     try {
       const [comparisonData, plansData] = await Promise.all([
-        pricingGraphqlRequest(GET_FEATURE_COMPARISON),
-        pricingGraphqlRequest(GET_PRICING_PLANS)
+        billingGraphqlRequest<any>(GET_FEATURE_COMPARISON),
+        billingGraphqlRequest<any>(GET_PRICING_PLANS)
       ])
 
-      if (comparisonData?.featureComparison && plansData?.pricingPagePackages) {
-        const transformedPlans: Plan[] = plansData.pricingPagePackages.map((pkg: any) => ({
+      if (comparisonData?.publicFeatureComparison && plansData?.publicPricingPackages) {
+        const transformedPlans: Plan[] = plansData.publicPricingPackages.map((pkg: any) => ({
           id: pkg.id,
           name: pkg.name,
           highlighted: pkg.highlighted || false
         }))
 
-        const transformedComparison: FeatureCategory[] = comparisonData.featureComparison.map((category: any) => ({
+        const transformedComparison: FeatureCategory[] = comparisonData.publicFeatureComparison.map((category: any) => ({
           name: category.name,
           features: category.features.map((feature: any) => {
             const plans: Record<string, FeatureValue> = {}
@@ -223,7 +223,7 @@ export function ComparePlansModal({
       }
     } catch (err) {
       console.error('Failed to fetch feature comparison:', err)
-      setError('Unable to load comparison. Please make sure the backend is running on port 8000.')
+      setError('Unable to load comparison. Please try again shortly.')
     } finally {
       setLoading(false)
     }

@@ -1,51 +1,78 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { SiteHeader } from "@/components/site-header"
 import { PricingHero } from "@/components/pricing-hero"
 import { PricingCards } from "@/components/pricing-cards"
+import { CategorySelector } from "@/components/category-selector"
 import { ComparePlansButton } from "@/components/compare-plans-modal"
 import { SiteFooter } from "@/components/site-footer"
-import { type Plan } from "@/lib/pricing-data"
-import { pricingGraphqlRequest, GET_PRICING_PLANS } from "@/lib/graphql-client"
+import { ArrowLeft } from "lucide-react"
+import { billingGraphqlRequest, GET_PUBLIC_PLANS, type PublicPlan } from "@/lib/graphql-client"
+import { filterCategoriesByParam, getCategoryParam, buildCustomizeHref } from "@/lib/category-filter"
 
-interface PricingPlansResponse {
-  pricingPagePackages: Plan[]
+interface PublicPlansResponse {
+  publicPlans: PublicPlan[]
 }
 
 export default function PricingPage() {
   const [isAnnual, setIsAnnual] = useState(true)
-  const [plans, setPlans] = useState<Plan[]>([])
+  const [categories, setCategories] = useState<PublicPlan[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<PublicPlan | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // ?category=tax / ?category=tax,buyer / ?category=all (default) --
+  // restricts which categories are offered at all, on this page and on
+  // the same-origin link into /customize below. See lib/category-filter.
+  const visibleCategories = useMemo(
+    () => filterCategoriesByParam(categories, getCategoryParam()),
+    [categories]
+  )
+
+  // "Customize your own plan" links (header + hero) should carry this
+  // page's category context forward, not reset to every category.
+  const customizeHref = useMemo(
+    () => buildCustomizeHref(selectedCategory, getCategoryParam()),
+    [selectedCategory]
+  )
+
   useEffect(() => {
-    async function fetchPricingPlans() {
+    async function fetchCategories() {
       try {
-        const data = await pricingGraphqlRequest<PricingPlansResponse>(
-          GET_PRICING_PLANS
-        )
-        if (data.pricingPagePackages && data.pricingPagePackages.length > 0) {
-          setPlans(data.pricingPagePackages)
+        const data = await billingGraphqlRequest<PublicPlansResponse>(GET_PUBLIC_PLANS)
+        if (data.publicPlans && data.publicPlans.length > 0) {
+          setCategories(data.publicPlans)
         } else {
           setError('No pricing plans returned from the API.')
         }
       } catch (err) {
         console.error('Failed to fetch pricing plans:', err)
-        setError('Unable to load pricing plans. Please make sure the backend is running on port 8000 (Wellongepay) or check NEXT_PUBLIC_PRICING_GRAPHQL_URL in .env.local.')
+        setError('Unable to load pricing plans. Please check NEXT_PUBLIC_BILLING_GRAPHQL_URL in .env.local.')
       } finally {
         setIsLoading(false)
       }
     }
 
-    fetchPricingPlans()
+    fetchCategories()
   }, [])
+
+  // Skip the picker entirely once there's exactly one category to offer
+  // -- either because the URL narrowed it down to one, or because the
+  // tenant only has one real category with packages.
+  useEffect(() => {
+    if (selectedCategory) return
+    const withPlans = visibleCategories.filter((c) => c.packages.length > 0)
+    if (withPlans.length === 1 && visibleCategories.length === 1) {
+      setSelectedCategory(withPlans[0])
+    }
+  }, [visibleCategories, selectedCategory])
 
   return (
     <div className="min-h-screen bg-background">
-      <SiteHeader />
+      <SiteHeader customizeHref={customizeHref} />
       <main>
-        <PricingHero isAnnual={isAnnual} onToggle={setIsAnnual} />
+        <PricingHero isAnnual={isAnnual} onToggle={setIsAnnual} customizeHref={customizeHref} />
         {isLoading ? (
           <div className="flex items-center justify-center py-24">
             <div className="text-center">
@@ -71,9 +98,30 @@ export default function PricingPage() {
               </button>
             </div>
           </div>
+        ) : !selectedCategory ? (
+          <CategorySelector categories={visibleCategories} onSelect={setSelectedCategory} />
         ) : (
           <>
-            <PricingCards plans={plans} isAnnual={isAnnual} />
+            {visibleCategories.length > 1 && (
+              <div className="mx-auto max-w-6xl px-4 pt-2 mb-6">
+                <button
+                  onClick={() => setSelectedCategory(null)}
+                  className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground shadow-sm hover:border-primary/40 hover:text-primary transition-colors"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  All categories
+                </button>
+                <h2 className="mt-4 text-xl font-semibold text-foreground">
+                  {selectedCategory.name} plans
+                </h2>
+              </div>
+            )}
+            <PricingCards
+              plans={selectedCategory.packages}
+              isAnnual={isAnnual}
+              categoryId={selectedCategory.id}
+              categoryName={selectedCategory.name}
+            />
             <ComparePlansButton />
           </>
         )}

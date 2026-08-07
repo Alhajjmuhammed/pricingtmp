@@ -9,18 +9,25 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
-import { registerPersonalAccount, createPersonalProfile, createOrganization, requestEmailVerificationCode, verifyEmailCode, resendEmailVerificationCode } from "@/services"
+import { registerPersonalAccount, loginPersonalAccount, createPersonalProfile, createOrganization, requestEmailVerificationCode, verifyEmailCode, resendEmailVerificationCode } from "@/services"
 import { syncUserToWellongeId } from "@/services/wellongeid/wellongeIdSyncService"
-import { 
-  graphqlRequest, 
-  GET_SERVICE_CATEGORIES,
-  SAVE_CLIENT_DRAFT,
-  type ServiceCategory,
-  type SaveClientDraftResult,
-  type ClientDraftInput,
-  type ClientFeatureSelectionInput,
-  type ClientSubFeatureSelectionInput,
-  type ClientAddonSelectionInput,
+import {
+  registerWithClientManagement,
+  registerWithTaxCompliance,
+  registerWithSupplierPlatform,
+  resolveDestinationSystem,
+  mapToTaxComplianceModules,
+  mapToSupplierPlatformModules,
+} from "@/services/provisioning/destinationSystems"
+import { withRetry } from "@/lib/retry"
+import {
+  billingGraphqlRequest,
+  GET_PUBLIC_CATALOG,
+  REGISTER_SUBSCRIPTION,
+  REGISTER_CUSTOM_SUBSCRIPTION,
+  type PublicFeature,
+  type RegisterSubscriptionResult,
+  type RegisterCustomSubscriptionResult,
 } from "@/lib/graphql-client"
 
 const COUNTRY_CODES = [
@@ -51,6 +58,26 @@ const COUNTRIES = [
   { iso: "gb", name: "UK" },
   { iso: null, name: "Other" },
 ]
+
+// Mirrors Wellonge ID's actual server-side rule (authentication/registration/
+// utils/password_validator.py) so a weak password gets caught here, at
+// account-info submission, instead of failing later at the real
+// registration call -- after NBC card verification has already run.
+function validatePasswordStrength(password: string): string | null {
+  if (password.length < 8) return "Password must be at least 8 characters"
+  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter"
+  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter"
+  if (!/\d/.test(password)) return "Password must contain at least one number"
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) return "Password must contain at least one special character"
+  const lower = password.toLowerCase()
+  const commonPatterns = [
+    /(.)\1{3,}/,
+    /(012|123|234|345|456|567|678|789|890)/,
+    /(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz)/,
+  ]
+  if (commonPatterns.some((p) => p.test(lower))) return "Password contains common patterns that are easy to guess"
+  return null
+}
 
 function detectCardType(number: string): "visa" | "mastercard" | "amex" | "discover" | null {
   const raw = number.replace(/\s/g, "")
@@ -365,69 +392,46 @@ export default function RegisterPage() {
     setError("")
   }
 
-  // Fetch services when entering edit mode
+  // Fetch the catalog when entering edit mode (billing backend's public
+  // API). "service" in this component's state == a Feature; each
+  // "service.features[]" entry == a SubFeature, flattened directly (the
+  // new catalog has no third nesting level -- pricing only ever lives on
+  // the SubFeature/Addon itself). ids are the catalog's real UUIDs, used
+  // as-is when building the subscription mutation payload later.
   const fetchServices = async () => {
     try {
       setIsLoadingServices(true)
-      
-      // Check if Client Management backend (Port 8001) is available
-      const healthCheck = await fetch(process.env.NEXT_PUBLIC_GRAPHQL_URL || 'http://localhost:8001/graphql/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: '{ __typename }' }),
-      }).catch(() => null)
-      
-      if (!healthCheck || !healthCheck.ok) {
-        console.warn('[Services] Client Management backend (Port 8001) not available. Skipping services fetch.')
-        setIsLoadingServices(false)
-        return
-      }
-      
-      const data = await graphqlRequest<{ serviceCategories: ServiceCategory[] }>(
-        GET_SERVICE_CATEGORIES
+
+      const data = await billingGraphqlRequest<{ publicCatalog: PublicFeature[] }>(
+        GET_PUBLIC_CATALOG
       )
 
-      const transformedServices = data.serviceCategories
-        .filter((s: any) => s.isActive)
-        .map((service: any) => ({
-          id: service.slug,
-          slug: service.slug,
-          name: service.name,
-          color: service.color || '#3B82F6',
-          isActive: service.isActive,
-          addons: (service.addons || [])
-            .filter((a: any) => a.isActive)
-            .map((addon: any) => ({
-              id: addon.slug,
-              slug: addon.slug,
-              name: addon.name,
-              description: addon.description || '',
-              price: Number(addon.price) || 0,
-              pricingPeriod: addon.pricingPeriod || 'monthly',
-            })),
-          features: (service.features || [])
-            .filter((f: any) => f.isActive)
-            .map((feature: any) => ({
-              id: feature.slug,
-              slug: feature.slug,
-              name: feature.name,
-              description: feature.description || '',
-              price: Number(feature.price) || 0,
-              pricingUnit: feature.pricingUnit || 'per_user',
-              isActive: feature.isActive,
-              isFree: feature.pricingUnit === 'free' || Number(feature.price) === 0,
-              subFeatures: (feature.subFeatures || [])
-                .filter((sf: any) => sf.isActive)
-                .map((subFeature: any) => ({
-                  id: subFeature.slug,
-                  slug: subFeature.slug,
-                  name: subFeature.name,
-                  description: subFeature.description || '',
-                  price: Number(subFeature.price) || 0,
-                  isActive: subFeature.isActive,
-                })),
-            })),
-        }))
+      const transformedServices = data.publicCatalog.map((feature) => ({
+        id: feature.id,
+        slug: feature.id,
+        name: feature.name,
+        color: '#3B82F6',
+        isActive: true,
+        addons: feature.addons.map((addon) => ({
+          id: addon.id,
+          slug: addon.id,
+          name: addon.name,
+          description: addon.description || '',
+          price: Number(addon.unitPrice) || 0,
+          pricingPeriod: addon.billingType === 'ANNUAL' ? 'yearly' : 'monthly',
+        })),
+        features: feature.subFeatures.map((sf) => ({
+          id: sf.id,
+          slug: sf.id,
+          name: sf.name,
+          description: sf.description || '',
+          price: Number(sf.price) || 0,
+          pricingUnit: sf.billingType === 'PER_USER' || sf.billingType === 'PER_DEVICE' ? 'per_user' : 'flat',
+          isActive: true,
+          isFree: Number(sf.price) === 0,
+          subFeatures: [] as any[],
+        })),
+      }))
 
       setServices(transformedServices)
       if (transformedServices.length > 0) {
@@ -462,7 +466,7 @@ export default function RegisterPage() {
         }
       }
     } catch (err: any) {
-      console.warn('[Services] Failed to fetch services from Port 8001 (non-critical):', err?.message || err)
+      console.warn('[Services] Failed to fetch catalog from billing API (non-critical):', err?.message || err)
       // Non-blocking error - services are only needed for custom plan editing
     } finally {
       setIsLoadingServices(false)
@@ -552,7 +556,9 @@ export default function RegisterPage() {
         service.features.forEach((feature: any) => {
           if (selectedFeatures[feature.id] && !feature.isFree) {
             const featurePrice = calculateFeaturePrice(feature)
-            monthly += featurePrice * userCount
+            // Only PER_USER/PER_DEVICE sub-features scale with seat count;
+            // flat (MONTHLY/ANNUAL/ONE_TIME) sub-features don't.
+            monthly += feature.pricingUnit === 'flat' ? featurePrice : featurePrice * userCount
           }
         })
       }
@@ -668,6 +674,10 @@ export default function RegisterPage() {
   }, [])
 
   const handleSendOtp = async () => {
+    if (!firstName || !lastName) {
+      setError("Please enter your first and last name")
+      return
+    }
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!email || !emailPattern.test(email)) {
       setError("Please enter a valid email address")
@@ -676,7 +686,7 @@ export default function RegisterPage() {
     setError("")
     setOtpSending(true)
     try {
-      const result = await requestEmailVerificationCode(email, 'eopsentre')
+      const result = await requestEmailVerificationCode(email, 'eopsentre', firstName)
       if (!result.success) {
         if ((result.data as any)?.rate_limited) setOtpLimitReached(true)
         setError(result.message || "Failed to send OTP. Please try again.")
@@ -716,7 +726,7 @@ export default function RegisterPage() {
   const handleResendOtp = async () => {
     if (resendCooldown > 0) return
     try {
-      const result = await resendEmailVerificationCode(email, 'eopsentre')
+      const result = await resendEmailVerificationCode(email, 'eopsentre', firstName)
       if (!result.success) {
         if ((result.data as any)?.rate_limited) setOtpLimitReached(true)
         setError(result.message || "Failed to resend code.")
@@ -738,8 +748,9 @@ export default function RegisterPage() {
       return
     }
     
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters")
+    const passwordError = validatePasswordStrength(password)
+    if (passwordError) {
+      setError(passwordError)
       return
     }
 
@@ -882,7 +893,13 @@ export default function RegisterPage() {
       let organizationType = 'custom_plan'
       let resolvedBillingPeriod = 'monthly'
       let planNameNote = ''
-      
+      let selectedPackageId: string | null = null // real billing Package UUID, if a pre-built plan was chosen
+      let selectedPackageName: string = ''
+      let selectedCategoryName: string | null = null // Tax Compliance / Buyer / Supplier -- which destination system (if any) to also provision
+      let purchasedModuleNames: string[] = [] // wellongepay Feature/module names actually purchased -- scopes destination-system dashboard access to what was bought
+      let destinationAccessToken: string | null = null // the destination system's own JWT, returned directly by registerFirm/register -- used to auto-login the user into that system's dashboard on the success page
+      let destinationRefreshToken: string | null = null
+
       const storedPlan = localStorage.getItem('selected_plan')
       if (storedPlan) {
         try {
@@ -891,6 +908,8 @@ export default function RegisterPage() {
             // User selected a pre-built package (Plus, ProMax, Enterprise, etc.)
             registrationPlatform = 'eopsentre_pricing_package'
             organizationType = 'prebuilt_plan'
+            selectedPackageId = planData.planId
+            purchasedModuleNames = planData.moduleNames || []
             console.log('📦 Registration source: Pre-built package', planData.planId)
           } else {
             console.log('🎨 Registration source: Custom plan')
@@ -898,8 +917,24 @@ export default function RegisterPage() {
 
           resolvedBillingPeriod = (planData.billingCycle === 'annual' || planData.billingCycle === 'annually' || planData.billingCycle === 'yearly') ? 'yearly' : 'monthly'
           if (planData.name) planNameNote = `Pre-built plan: ${planData.name}`
+          selectedPackageName = planData.name || ''
+          selectedCategoryName = planData.categoryName || null
         } catch (e) {
           console.warn('Could not parse selected_plan, defaulting to custom')
+        }
+      }
+
+      // Custom (build-your-own) plans clear selected_plan entirely on
+      // /customize, so the category has to come from customization_data
+      // instead -- see the categoryId/categoryName written there.
+      if (!selectedCategoryName) {
+        try {
+          const customDataRaw = localStorage.getItem('customization_data')
+          if (customDataRaw) {
+            selectedCategoryName = JSON.parse(customDataRaw).categoryName || null
+          }
+        } catch (e) {
+          // ignore parse errors
         }
       }
 
@@ -924,7 +959,7 @@ export default function RegisterPage() {
       })
 
       if (!accountResponse.success || !accountResponse.data?.id) {
-        const errorMsg = accountResponse.message || accountResponse.errors?.[0] || (accountResponse as any).error || "Failed to create account"
+        const errorMsg = accountResponse.error || "Failed to create account"
         console.error('❌ Account creation failed:', errorMsg)
         setError(errorMsg)
         return
@@ -933,46 +968,73 @@ export default function RegisterPage() {
       const newAccountId = accountResponse.data.id
       console.log('✅ Account created, ID:', newAccountId)
 
+      // Track which provisioning steps actually succeeded, for the success
+      // page and for support follow-up -- non-blocking steps fail silently
+      // to the user otherwise, which makes them invisible once this tab
+      // closes.
+      const provisioningResults: Record<string, boolean> = {}
+
+      // Step 1b: Log in to obtain a Bearer token. Registration itself
+      // never issues one (email verification gates that on the Wellonge ID
+      // side), but login only requires an active account -- and profile /
+      // organization creation both require auth, so this is the real,
+      // working way to get a usable token right after signup. Retried --
+      // this is the account we JUST created, a transient failure here
+      // shouldn't strand the user without a working identity.
+      console.log('📝 Step 1b: Logging in to obtain access token...')
+      const loginResponse = await withRetry(() => loginPersonalAccount(email, password))
+      if (!loginResponse.success || !loginResponse.data?.access_token) {
+        const errorMsg = loginResponse.message || loginResponse.errors?.[0] || "Failed to authenticate after registration"
+        console.error('❌ Login failed:', errorMsg)
+        setError(errorMsg)
+        return
+      }
+      const accessToken = loginResponse.data.access_token
+      const wellongeIdRefreshToken = loginResponse.data.refresh_token
+      console.log('✅ Logged in, access token acquired')
+
       // Step 2: Create personal profile
       console.log('📝 Step 2: Creating profile...')
-      const profileResponse = await createPersonalProfile({
+      const profileResponse = await withRetry(() => createPersonalProfile({
         personal_account_id: newAccountId,
         phone_number: `${countryCode}${phoneNumber}`,
         country,
         job_title: jobTitle,
         date_of_birth: dateOfBirth || undefined,
         preferred_contact: preferredContact.join(","),
-      })
+      }, accessToken))
 
       if (!profileResponse.success) {
-        const errorMsg = profileResponse.message || profileResponse.errors?.[0] || (profileResponse as any).error || "Failed to create profile"
+        const errorMsg = profileResponse.error || "Failed to create profile"
         console.error('❌ Profile creation failed:', errorMsg)
         setError(errorMsg)
         return
       }
+      provisioningResults.wellongeIdProfile = true
       console.log('✅ Profile created')
 
       // Step 3: Create organization
       console.log('📝 Step 3: Creating organization...')
-      const orgResponse = await createOrganization({
+      const orgResponse = await withRetry(() => createOrganization({
         name: orgName,
         legal_name: orgName,
         slug: orgSlug,
         industry,
         size: orgSize,
-        organization_type: organizationType,
         personal_account_owner_id: newAccountId,
         primary_email: email,
         primary_phone: `${countryCode}${phoneNumber}`,
-      })
+      }, accessToken))
 
       if (!orgResponse.success || !orgResponse.data?.id) {
-        const errorMsg = orgResponse.message || orgResponse.errors?.[0] || (orgResponse as any).error || "Failed to create organization"
+        const errorMsg = orgResponse.error || "Failed to create organization"
         console.error('❌ Organization creation failed:', errorMsg)
         setError(errorMsg)
         return
       }
-      console.log('✅ Organization created, ID:', orgResponse.data.id)
+      const orgId = orgResponse.data.id
+      provisioningResults.wellongeIdOrganization = true
+      console.log('✅ Organization created, ID:', orgId)
 
       // Step 3.5: Save Payment Method to Wellongepay
       console.log('📝 Step 3.5: Saving payment method to Wellongepay...')
@@ -1013,138 +1075,212 @@ export default function RegisterPage() {
         console.warn('⚠️ Could not save payment method (non-blocking):', paymentSaveError?.message)
       }
 
-      // Step 4: Save client record to management backend (non-blocking)
-      console.log('📝 Step 4: Saving client to management backend...')
+      // Step 4: Create the real subscription in the billing engine.
+      // Retried, non-blocking -- the account/profile/org already exist.
+      console.log('📝 Step 4: Creating subscription...')
+      const billingCycleUpper = resolvedBillingPeriod === 'yearly' ? 'ANNUAL' : 'MONTHLY'
       try {
-        // Build subfeature selections with parent feature lookup from services state
-        const planSubfeatureSelections: ClientSubFeatureSelectionInput[] = []
-        services.forEach((service: any) => {
-          if (selectedServices.includes(service.id)) {
-            service.features?.forEach((feature: any) => {
-              feature.subFeatures?.forEach((sf: any) => {
-                if (selectedSubFeatures[sf.id]) {
-                  planSubfeatureSelections.push({
-                    featureSlug: feature.id,
-                    subFeatureSlug: sf.id,
-                    isEnabled: true,
-                  })
-                }
+        await withRetry(async () => {
+          if (selectedPackageId) {
+            // Pre-built plan — subscribe straight to the chosen Package
+            const subResult = await billingGraphqlRequest<RegisterSubscriptionResult>(
+              REGISTER_SUBSCRIPTION,
+              {
+                packageId: selectedPackageId,
+                ownerWalletId: newAccountId,
+                billingCycle: billingCycleUpper,
+              }
+            )
+            console.log('✅ Subscription created:', subResult.registerSubscription?.subscriptionId)
+          } else {
+            // Custom plan — build the Sub-Feature/Add-on selections from
+            // whatever the customer picked (customize page, or edited here
+            // during review); service.features[] entries are the catalog's
+            // real SubFeatures (flat, no third nesting level), so a
+            // selected one is already the priced thing.
+            const subFeatureSelections: { subFeatureId: string }[] = []
+            const addonSelections: { addonId: string; quantity: number }[] = []
+            services.forEach((service: any) => {
+              if (!selectedServices.includes(service.id)) return
+              service.features?.forEach((feature: any) => {
+                if (selectedFeatures[feature.id]) subFeatureSelections.push({ subFeatureId: feature.id })
+              })
+              service.addons?.forEach((addon: any) => {
+                if (selectedAddOns[addon.id]) addonSelections.push({ addonId: addon.id, quantity: 1 })
               })
             })
+
+            if (subFeatureSelections.length > 0 || addonSelections.length > 0) {
+              const subResult = await billingGraphqlRequest<RegisterCustomSubscriptionResult>(
+                REGISTER_CUSTOM_SUBSCRIPTION,
+                {
+                  packageName: `${orgName} Custom Plan`,
+                  subFeatureSelections,
+                  addonSelections,
+                  ownerWalletId: newAccountId,
+                  billingCycle: billingCycleUpper,
+                }
+              )
+              console.log('✅ Custom subscription created:', subResult.registerCustomSubscription?.subscriptionId)
+            } else {
+              console.warn('⚠️ No catalog selections found — skipping subscription creation')
+            }
           }
         })
-
-        const planFeatureSelections: ClientFeatureSelectionInput[] = Object.entries(selectedFeatures)
-          .filter(([_, v]) => v)
-          .map(([slug]) => ({ slug, quantity: userCount }))
-
-        const planAddonSelections: ClientAddonSelectionInput[] = Object.entries(selectedAddOns)
-          .filter(([_, v]) => v)
-          .map(([slug]) => ({ slug, quantity: 1 }))
-
-        const clientDraftInput: ClientDraftInput = {
-          // Personal info
-          firstName,
-          lastName,
-          primaryEmail: email,
-          primaryPhone: `${countryCode}${phoneNumber}`,
-          phoneCountryCode: countryCode,
-          birthDate: dateOfBirth || null,
-          jobTitle,
-          whatsappEnabled: preferredContact.includes('WhatsApp'),
-
-          // Business info
-          name: orgName,
-          legalName: orgName,
-          businessDomain: orgSlug,
-          industry,
-          companySize: orgSize,
-          organizationCount: orgCount,
-
-          // Billing address (from step 3)
-          street: billingAddress,
-          city: billingCity,
-          country: billingCountry,
-          billingName,
-          billingAddress,
-          cardBrand: cardBrand || undefined,
-          cardLast4,
-          cardExpiry,
-
-          // Billing period
-          billingPeriod: resolvedBillingPeriod,
-
-          // Notes (plan name for pre-built packages)
-          ...(planNameNote && { notes: planNameNote }),
-
-          // Registration tracking
-          registrationSource: clientRegistrationSource,
-          personalAccountId: newAccountId,
-
-          // Plan selections (only for custom plans)
-          ...(selectedServices.length > 0 && {
-            selectedServices,
-            featureSelections: planFeatureSelections,
-            subfeatureSelections: planSubfeatureSelections,
-            addonSelections: planAddonSelections,
-            userCount,
-            assetCount,
-            storageGb: storageGB,
-            assetPrice,
-            storagePrice,
-          }),
-        }
-
-        const clientResult = await graphqlRequest<SaveClientDraftResult>(SAVE_CLIENT_DRAFT, { input: clientDraftInput })
-        if (clientResult.saveClientDraft?.success) {
-          console.log('✅ Client saved to management backend, ID:', clientResult.saveClientDraft.client?.id)
-        } else {
-          console.warn('⚠️ Client draft returned failure (non-blocking):', clientResult.saveClientDraft?.message)
-        }
-      } catch (clientErr: any) {
-        // Non-blocking — account is already created, registration continues
-        console.warn('⚠️ Could not save client to management backend (non-blocking):', clientErr?.message)
+        provisioningResults.wellongepaySubscription = true
+      } catch (subErr: any) {
+        // Non-blocking — the account, org, and payment method are already
+        // created; a missing subscription can be created by support later.
+        console.warn('⚠️ Could not create subscription (non-blocking):', subErr?.message)
       }
 
-      // Step 5: Mirror user to Wellonge ID (port 8002) — non-blocking
-      console.log('📝 Step 5: Syncing user to Wellonge ID (port 8002)...')
+      // Custom (build-your-own) plans have no moduleNames from selected_plan
+      // -- derive them from the same services/selectedServices state Step 4
+      // just used to build the subscription's Sub-Feature selections.
+      if (!selectedPackageId) {
+        purchasedModuleNames = services
+          .filter((s: any) => selectedServices.includes(s.id))
+          .map((s: any) => s.name)
+      }
+
+      // Human-readable purchase summary for clientmng admins (clientall.
+      // eopsprimax.com) -- its own ServiceCategory/Feature catalog uses
+      // different IDs than wellongepay's, so this free-text summary is
+      // what makes the purchase visible there at all.
+      const purchasePrice = selectedPackageId ? (selectedPlan?.price ?? null) : calculateTotal()
+      const purchaseSummary = `Purchased: ${selectedCategoryName || 'Custom'} - ${selectedPackageName || 'Custom Plan'}` +
+        (purchasePrice != null ? ` ($${Number(purchasePrice).toFixed(2)}/${resolvedBillingPeriod === 'yearly' ? 'yr' : 'mo'})` : '') +
+        (purchasedModuleNames.length > 0 ? ` - Modules: ${purchasedModuleNames.join(', ')}` : '')
+
+      // Step 4.5: Register in Client User Management (clientmng) — every
+      // registration, regardless of category. Retried, non-blocking.
+      console.log('📝 Step 4.5: Registering in Client User Management...')
       try {
-        await syncUserToWellongeId({
+        const cmResult = await withRetry(() => registerWithClientManagement({
+          firstName,
+          lastName,
+          email,
+          phone: `${countryCode}${phoneNumber}`,
+          country,
+          jobTitle,
+          orgName,
+          industry,
+          orgSize,
+          billingPeriod: resolvedBillingPeriod === 'yearly' ? 'yearly' : 'monthly',
+          userCount: customizationData?.userCount,
+          assetCount: customizationData?.assetCount,
+          storageGb: customizationData?.storageGB,
+          purchaseSummary,
+        }))
+        provisioningResults.clientManagement = true
+        console.log('✅ Registered in Client User Management:', cmResult?.clientId, cmResult?.organizationId)
+      } catch (cmErr: any) {
+        console.warn('⚠️ Could not register in Client User Management (non-blocking):', cmErr?.message)
+      }
+
+      // Step 4.6: Provision the account in the actual product they
+      // subscribed to (Tax Compliance / Buyer / Supplier), based on the
+      // category chosen on the pricing page. Retried, non-blocking.
+      // Custom-plan registrations (no category) skip this — there's no
+      // single destination system to provision.
+      const destinationSystem = resolveDestinationSystem(selectedCategoryName || undefined)
+      if (destinationSystem === 'tax_compliance') {
+        console.log('📝 Step 4.6: Registering with Tax Compliance platform...')
+        try {
+          const tcResult = await withRetry(() => registerWithTaxCompliance({
+            orgName,
+            industry,
+            orgSize,
+            country,
+            email,
+            password,
+            firstName,
+            lastName,
+            planName: selectedPackageName || 'standard',
+            purchasedModules: mapToTaxComplianceModules(purchasedModuleNames),
+          }))
+          provisioningResults.taxCompliancePlatform = true
+          destinationAccessToken = tcResult?.accessToken || null
+          destinationRefreshToken = tcResult?.refreshToken || null
+          console.log('✅ Registered with Tax Compliance platform:', tcResult?.message)
+        } catch (tcErr: any) {
+          console.warn('⚠️ Could not register with Tax Compliance platform (non-blocking):', tcErr?.message)
+        }
+      } else if (destinationSystem === 'buyer' || destinationSystem === 'supplier') {
+        console.log(`📝 Step 4.6: Registering with Supplier Connect platform (${destinationSystem})...`)
+        try {
+          const spResult = await withRetry(() => registerWithSupplierPlatform({
+            orgName,
+            orgSlug,
+            country,
+            email,
+            password,
+            firstName,
+            lastName,
+            orgType: destinationSystem,
+            planName: selectedPackageName || 'standard',
+            purchasedModules: mapToSupplierPlatformModules(purchasedModuleNames),
+          }))
+          provisioningResults.supplierConnectPlatform = true
+          destinationAccessToken = spResult?.accessToken || null
+          destinationRefreshToken = spResult?.refreshToken || null
+          console.log('✅ Registered with Supplier Connect platform:', spResult?.user?.id)
+        } catch (spErr: any) {
+          console.warn('⚠️ Could not register with Supplier Connect platform (non-blocking):', spErr?.message)
+        }
+      }
+
+      // Step 5: Mirror user to Wellonge ID's eOpsEntre-specific linkage
+      // (createEopsentreAccount) — retried, non-blocking. The core
+      // identity (account/profile/org) is already created in Steps 1-3;
+      // this links it to eOpsEntre-platform-specific records.
+      console.log('📝 Step 5: Syncing user to Wellonge ID (eOpsEntre linkage)...')
+      try {
+        const syncResult = await withRetry(() => syncUserToWellongeId({
           email,
           password,
           firstName,
           lastName,
-          phoneNumber: `${countryCode}${phoneNumber}`,
-          country,
-          jobTitle,
-          dateOfBirth: dateOfBirth || undefined,
-          orgName,
-          orgSlug,
-          industry,
-          orgSize,
-          organizationType,
-          platform: registrationPlatform,
           personalAccountId: newAccountId,
-        })
-        console.log('✅ User synced to Wellonge ID')
+          organizationId: orgId,
+          accessToken,
+        }))
+        if (!syncResult.success) throw new Error(syncResult.message || 'Unknown error')
+        provisioningResults.wellongeIdEopsentreLink = true
+        console.log('✅ User synced to Wellonge ID, EopsentreAccount:', syncResult.eopsentreAccountId)
       } catch (syncErr: any) {
         // Non-blocking — registration already succeeded
         console.warn('⚠️ Could not sync user to Wellonge ID (non-blocking):', syncErr?.message)
       }
 
-      // All steps completed — store data for success page and redirect
-      console.log('🎉 Registration complete!')
+      // All steps completed — store data (including which non-blocking
+      // steps actually succeeded, so a failure isn't silently lost once
+      // this tab closes) for the success page and redirect
+      console.log('🎉 Registration complete!', provisioningResults)
       localStorage.setItem('registration_data', JSON.stringify({
         accountId: newAccountId,
         email,
         firstName,
         lastName,
-        orgId: orgResponse.data.id,
+        orgId,
         orgName,
         industry,
         orgSize,
         registrationSource: clientRegistrationSource,
         billingPeriod: resolvedBillingPeriod,
+        provisioningResults,
+        // Which destination product (if any) got provisioned, and its own
+        // JWT (returned directly by registerFirm/register) -- lets the
+        // success page auto-login the user straight into that system's
+        // dashboard instead of dropping them at a login screen.
+        destinationSystem,
+        destinationAccessToken,
+        destinationRefreshToken,
+        // The user's own Wellonge ID identity tokens (from Step 1b's login)
+        // -- lets the success page also offer auto-login into their real
+        // Wellonge ID account dashboard (profile/organizations/settings).
+        wellongeIdAccessToken: accessToken,
+        wellongeIdRefreshToken,
         billing: {
           billingName,
           billingAddress,
@@ -1175,7 +1311,7 @@ export default function RegisterPage() {
           </Link>
           <h1 className="text-3xl font-bold mb-2">Create Your Account</h1>
           <p className="text-muted-foreground">
-            Complete your registration to unlock eOpsEntre platform
+            Complete your registration to unlock eOpsPrimax platform
           </p>
         </div>
 
@@ -1226,6 +1362,34 @@ export default function RegisterPage() {
                 </p>
               </div>
               <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="first-name-entry">First Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="first-name-entry"
+                        placeholder="Moh'd"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="last-name-entry">Last Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="last-name-entry"
+                        placeholder="Juma"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="email-otp-entry">Email Address</Label>
                   <div className="relative">
@@ -1376,11 +1540,9 @@ export default function RegisterPage() {
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="firstName"
-                        placeholder="Moh'd"
                         value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        className="pl-10"
-                        required
+                        readOnly
+                        className="pl-10 bg-muted cursor-default"
                       />
                     </div>
                   </div>
@@ -1390,11 +1552,9 @@ export default function RegisterPage() {
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="lastName"
-                        placeholder="Juma"
                         value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        className="pl-10"
-                        required
+                        readOnly
+                        className="pl-10 bg-muted cursor-default"
                       />
                     </div>
                   </div>
@@ -1631,7 +1791,9 @@ export default function RegisterPage() {
                           minLength={8}
                         />
                       </div>
-                      <p className="text-xs text-muted-foreground">Minimum 8 characters</p>
+                      <p className="text-xs text-muted-foreground">
+                        Min. 8 characters, with uppercase, lowercase, a number, and a symbol
+                      </p>
                     </div>
 
                     <div className="space-y-2">

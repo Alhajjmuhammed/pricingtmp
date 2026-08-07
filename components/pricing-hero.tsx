@@ -8,9 +8,11 @@ import { ArrowRight, Settings2, Sparkles } from "lucide-react"
 export function PricingHero({
   isAnnual,
   onToggle,
+  customizeHref = "/customize",
 }: {
   isAnnual: boolean
   onToggle: (value: boolean) => void
+  customizeHref?: string
 }) {
   return (
     <section className="relative overflow-hidden pt-20 pb-8">
@@ -49,7 +51,7 @@ export function PricingHero({
         {/* Action bar: left = Customize, right = Billing toggle */}
         <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
           {/* Left: Customize your own plan */}
-          <Link href="/customize">
+          <Link href={customizeHref}>
             <Button
               variant="outline"
               className="group relative h-12 gap-3 rounded-full border-primary/30 bg-primary/5 px-6 text-sm font-semibold text-primary hover:bg-primary/10 hover:border-primary/50 transition-all duration-300"

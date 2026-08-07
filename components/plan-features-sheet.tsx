@@ -37,7 +37,7 @@ import {
 import { cn } from "@/lib/utils"
 import { type FeatureValue } from "@/lib/pricing-data"
 import type { Plan } from "@/lib/pricing-data"
-import { pricingGraphqlRequest, GET_FEATURE_COMPARISON } from "@/lib/graphql-client"
+import { billingGraphqlRequest, GET_FEATURE_COMPARISON } from "@/lib/graphql-client"
 
 // Transformed feature category type
 type FeatureCategory = {
@@ -168,10 +168,10 @@ export function PlanFeaturesSheet({
   const fetchData = async () => {
     setLoading(true)
     try {
-      const comparisonData = await pricingGraphqlRequest(GET_FEATURE_COMPARISON)
+      const comparisonData = await billingGraphqlRequest<any>(GET_FEATURE_COMPARISON)
 
-      if (comparisonData?.featureComparison) {
-        const transformed: FeatureCategory[] = comparisonData.featureComparison.map((category: any) => ({
+      if (comparisonData?.publicFeatureComparison) {
+        const transformed: FeatureCategory[] = comparisonData.publicFeatureComparison.map((category: any) => ({
           name: category.name,
           features: category.features.map((feature: any) => {
             const plans: Record<string, FeatureValue> = {}
@@ -209,7 +209,7 @@ export function PlanFeaturesSheet({
       }
     } catch (err) {
       console.error('Failed to fetch feature comparison:', err)
-      setError('Unable to load features. Please make sure the backend is running on port 8000.')
+      setError('Unable to load features. Please try again shortly.')
     } finally {
       setLoading(false)
     }

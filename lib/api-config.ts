@@ -1,30 +1,29 @@
 /**
  * API Configuration for Pricingtmp
- * Connects to both Wellongepay (Port 8000) and Client Management (Port 8001) backends
+ *
+ * The pricing/customize/registration pages run fully unauthenticated (no
+ * logged-in admin, no Bearer token) -- they're a public storefront. The
+ * billing backend's normal tenant-resolution auth gate requires a Bearer
+ * token, so this site instead calls a small set of deliberately-public
+ * resolvers (see billing/subscriptions/queries/public_queries.py and
+ * mutations/public_mutations.py) that take an explicit tenantId argument.
+ * BILLING_TENANT_ID identifies which platform's catalog/pricing to show --
+ * there's currently only one tenant (wellongepay/haminass).
  */
 
-// Wellongepay Billing Backend (Port 8000) - For main pricing page
-export const PRICING_GRAPHQL_URL = 
-  process.env.NEXT_PUBLIC_PRICING_GRAPHQL_URL || 
-  'http://localhost:8000/graphql/';
+// Billing (Wellongepay) GraphQL backend -- pricing, catalog, subscriptions
+export const BILLING_GRAPHQL_URL =
+  process.env.NEXT_PUBLIC_BILLING_GRAPHQL_URL ||
+  'https://backwellongepay.eopsprimax.com/graphql/';
 
-// Client Management Backend (Port 8001) - For customize page
-export const GRAPHQL_BASE_URL = 
-  process.env.NEXT_PUBLIC_GRAPHQL_URL || 
-  'http://localhost:8001/graphql/';
+// The tenant whose catalog/pricing this storefront shows
+export const BILLING_TENANT_ID =
+  process.env.NEXT_PUBLIC_BILLING_TENANT_ID ||
+  '05cf2f3e-eef4-400e-9a4d-a4e74421fb0e';
 
 /**
- * Helper function to get GraphQL endpoint
- * @returns GraphQL endpoint URL
+ * Helper function to get the billing GraphQL endpoint
  */
-export function getGraphQLEndpoint(): string {
-  return GRAPHQL_BASE_URL;
-}
-
-/**
- * Helper function to get pricing GraphQL endpoint
- * @returns Pricing GraphQL endpoint URL
- */
-export function getPricingGraphQLEndpoint(): string {
-  return PRICING_GRAPHQL_URL;
+export function getBillingGraphQLEndpoint(): string {
+  return BILLING_GRAPHQL_URL;
 }
