@@ -101,7 +101,7 @@ export async function registerPersonalAccount(
     // nests registration under `auth/`). Registration itself never issues
     // a token (email verification is required before login does) --
     // see loginPersonalAccount, called separately right after this.
-    const response = await wellongeIdApiService.post<PersonalAccountResponse>(
+    const response = await wellongeIdApiService.post<any>(
       '/api/v1/auth/register/',
       {
         email: input.email,
@@ -114,11 +114,37 @@ export async function registerPersonalAccount(
       }
     );
 
-    if (response.data?.token && typeof window !== 'undefined') {
-      localStorage.setItem('auth_token', response.data.token);
+    if (!response.success) {
+      return response;
     }
 
-    return response;
+    // BaseApiService.post() wraps the ENTIRE backend response body
+    // ({success, message, data: {...}}) as `data` again on top of its own
+    // {success: true, data} envelope -- the same double-wrap bug already
+    // fixed in loginPersonalAccount below, present here too and never
+    // fixed: reading response.data.id directly (as register/page.tsx's
+    // Step 1 does) always got undefined, since the real id is one level
+    // deeper. The real backend also names the field `user_id`, not `id`.
+    // Together this meant every real registration failed at Step 1 with
+    // "Failed to create account" before anything else in the flow ever
+    // ran -- caught via a live end-to-end registration test, not a
+    // hypothetical read of the code.
+    const backendData = (response.data as any)?.data || response.data || {};
+    const accountData: PersonalAccountResponse = {
+      id: backendData.user_id || backendData.id,
+      email: backendData.email,
+      username: backendData.username,
+      first_name: backendData.first_name,
+      last_name: backendData.last_name,
+      created_at: backendData.created_at,
+      token: backendData.token,
+    };
+
+    if (accountData.token && typeof window !== 'undefined') {
+      localStorage.setItem('auth_token', accountData.token);
+    }
+
+    return { success: true, data: accountData };
   } catch (error) {
     return {
       success: false,
@@ -221,7 +247,7 @@ export async function createOrganization(
   // choices: company | non_profit | government | educational | business |
   // other (NOT the caller's internal "prebuilt_plan"/"custom_plan"
   // tracking value -- that's a different concept, kept separate).
-  return await wellongeIdApiService.post<OrganizationResponse>(
+  const response = await wellongeIdApiService.post<any>(
     '/api/v1/organizations/',
     {
       name: input.name,
@@ -238,6 +264,15 @@ export async function createOrganization(
     },
     authHeader(accessToken)
   );
+
+  if (!response.success) {
+    return response;
+  }
+
+  // Same double-wrap bug as registerPersonalAccount above -- the real
+  // org id was one level deeper than orgResponse.data.id ever read.
+  const backendData = (response.data as any)?.data || response.data || {};
+  return { success: true, data: backendData as OrganizationResponse };
 }
 
 export async function requestEmailVerificationCode(
