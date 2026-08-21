@@ -960,6 +960,7 @@ export default function RegisterPage() {
       let destinationAccessToken: string | null = null // the destination system's own JWT, returned directly by registerFirm/register -- used to auto-login the user into that system's dashboard on the success page
       let destinationRefreshToken: string | null = null
       let primaryDestinationSystem: ReturnType<typeof resolveDestinationSystem> = null // whichever destination system's token actually got captured above -- the one the success page auto-logs into, when a plan spans more than one
+      let destinationUserId: string | null = null // that same primary destination's own user id -- passed to clientmng so a future deleteClient can cascade-suspend the right account
 
       const storedPlan = localStorage.getItem('selected_plan')
       if (storedPlan) {
@@ -1228,33 +1229,7 @@ export default function RegisterPage() {
         (purchasePrice != null ? ` ($${Number(purchasePrice).toFixed(2)}/${resolvedBillingPeriod === 'yearly' ? 'yr' : 'mo'})` : '') +
         (purchasedModuleNames.length > 0 ? ` - Modules: ${purchasedModuleNames.join(', ')}` : '')
 
-      // Step 4.5: Register in Client User Management (clientmng) — every
-      // registration, regardless of category. Retried, non-blocking.
-      console.log('📝 Step 4.5: Registering in Client User Management...')
-      try {
-        const cmResult = await withRetry(() => registerWithClientManagement({
-          firstName,
-          lastName,
-          email,
-          phone: `${countryCode}${phoneNumber}`,
-          country,
-          jobTitle,
-          orgName,
-          industry,
-          orgSize,
-          billingPeriod: resolvedBillingPeriod === 'yearly' ? 'yearly' : 'monthly',
-          userCount: customizationData?.userCount,
-          assetCount: customizationData?.assetCount,
-          storageGb: customizationData?.storageGB,
-          purchaseSummary,
-        }))
-        provisioningResults.clientManagement = true
-        console.log('✅ Registered in Client User Management:', cmResult?.clientId, cmResult?.organizationId)
-      } catch (cmErr: any) {
-        console.warn('⚠️ Could not register in Client User Management (non-blocking):', cmErr?.message)
-      }
-
-      // Step 4.6: Provision the account in the actual product(s) they
+      // Step 4.5: Provision the account in the actual product(s) they
       // subscribed to (Tax Compliance / Buyer / Supplier), based on the
       // category(ies) chosen on the pricing page or toggled on together on
       // /customize. Retried, non-blocking. Custom-plan registrations with
@@ -1263,6 +1238,8 @@ export default function RegisterPage() {
       // token becomes the one the success page auto-logs the user into —
       // a customer can only land on one dashboard immediately after
       // registering, even if their plan spans more than one product.
+      // Runs BEFORE Client User Management (next step) specifically so its
+      // user id is known in time to pass along — see destinationUserId.
       const destinationSystems = Array.from(
         new Set(
           selectedCategoryNames
@@ -1272,7 +1249,7 @@ export default function RegisterPage() {
       )
 
       if (destinationSystems.includes('tax_compliance')) {
-        console.log('📝 Step 4.6: Registering with Tax Compliance platform...')
+        console.log('📝 Step 4.5: Registering with Tax Compliance platform...')
         try {
           const tcResult = await withRetry(() => registerWithTaxCompliance({
             orgName,
@@ -1291,6 +1268,7 @@ export default function RegisterPage() {
             destinationAccessToken = tcResult?.accessToken || null
             destinationRefreshToken = tcResult?.refreshToken || null
             primaryDestinationSystem = 'tax_compliance'
+            destinationUserId = tcResult?.user?.id || null
           }
           console.log('✅ Registered with Tax Compliance platform:', tcResult?.message)
         } catch (tcErr: any) {
@@ -1300,7 +1278,7 @@ export default function RegisterPage() {
 
       for (const destinationSystem of destinationSystems) {
         if (destinationSystem !== 'buyer' && destinationSystem !== 'supplier') continue
-        console.log(`📝 Step 4.6: Registering with Supplier Connect platform (${destinationSystem})...`)
+        console.log(`📝 Step 4.5: Registering with Supplier Connect platform (${destinationSystem})...`)
         try {
           const spResult = await withRetry(() => registerWithSupplierPlatform({
             orgName,
@@ -1319,11 +1297,46 @@ export default function RegisterPage() {
             destinationAccessToken = spResult?.accessToken || null
             destinationRefreshToken = spResult?.refreshToken || null
             primaryDestinationSystem = destinationSystem
+            destinationUserId = spResult?.user?.id || null
           }
           console.log('✅ Registered with Supplier Connect platform:', spResult?.user?.id)
         } catch (spErr: any) {
           console.warn('⚠️ Could not register with Supplier Connect platform (non-blocking):', spErr?.message)
         }
+      }
+
+      // Step 4.6: Register in Client User Management (clientmng) — every
+      // registration, regardless of category. Retried, non-blocking. Runs
+      // after the destination-system registration above so
+      // destinationUserId (if any) is already known and can be stored
+      // alongside this client record — needed so a future deleteClient
+      // can actually cascade-suspend that account instead of only ever
+      // removing this local clientmng record.
+      console.log('📝 Step 4.6: Registering in Client User Management...')
+      try {
+        const cmResult = await withRetry(() => registerWithClientManagement({
+          firstName,
+          lastName,
+          email,
+          phone: `${countryCode}${phoneNumber}`,
+          country,
+          jobTitle,
+          orgName,
+          industry,
+          orgSize,
+          billingPeriod: resolvedBillingPeriod === 'yearly' ? 'yearly' : 'monthly',
+          userCount: customizationData?.userCount,
+          assetCount: customizationData?.assetCount,
+          storageGb: customizationData?.storageGB,
+          purchaseSummary,
+          wellongeAccountId: newAccountId,
+          destinationSystem: primaryDestinationSystem || undefined,
+          destinationUserId: destinationUserId || undefined,
+        }))
+        provisioningResults.clientManagement = true
+        console.log('✅ Registered in Client User Management:', cmResult?.clientId, cmResult?.organizationId)
+      } catch (cmErr: any) {
+        console.warn('⚠️ Could not register in Client User Management (non-blocking):', cmErr?.message)
       }
 
       // Step 5: Mirror user to Wellonge ID's eOpsEntre-specific linkage

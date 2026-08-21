@@ -136,6 +136,15 @@ export interface ClientManagementInput {
   // empty on purpose); this is what makes the purchase visible to an
   // admin browsing this client in clientall.eopsprimax.com at all.
   purchaseSummary?: string;
+  // Cross-system account references, so a future deleteClient in
+  // clientmng can actually reach this person's other accounts instead of
+  // only ever removing the local clientmng record. wellongeAccountId is
+  // always available (Step 1 of registration); destinationSystem/
+  // destinationUserId are only set when this registration also
+  // provisioned a Tax Compliance/Buyer/Supplier account.
+  wellongeAccountId?: string;
+  destinationSystem?: 'tax_compliance' | 'buyer' | 'supplier';
+  destinationUserId?: string;
 }
 
 // ─── Admin-drafted invitation (Client Management "finish registration") ───
@@ -255,6 +264,9 @@ export async function registerWithClientManagement(input: ClientManagementInput)
         },
         billingPeriod: input.billingPeriod,
         internalNotes: input.purchaseSummary,
+        wellongeAccountId: input.wellongeAccountId,
+        destinationSystem: input.destinationSystem,
+        destinationUserId: input.destinationUserId,
       },
     }
   );
