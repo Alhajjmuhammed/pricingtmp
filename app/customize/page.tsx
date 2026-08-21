@@ -15,6 +15,7 @@ import {
   AlertCircle,
   RefreshCw,
   ArrowRight,
+  Layers,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -34,7 +35,7 @@ import { FeatureList } from "@/components/customize/feature-list"
 import { InvoiceSummary } from "@/components/customize/invoice-summary"
 import { ThemeToggleFloating } from "@/components/theme-toggle"
 import { AddOnsSection } from "@/components/add-ons-section"
-import { CategorySelector } from "@/components/category-selector"
+import { BrandLogo } from "@/components/brand-logo"
 import {
   billingGraphqlRequest,
   GET_PUBLIC_CATALOG,
@@ -42,25 +43,55 @@ import {
   type PublicFeature,
   type PublicPlan,
 } from "@/lib/graphql-client"
-import { filterCategoriesByParam, getCategoryParam } from "@/lib/category-filter"
+import { filterCategoriesByParam, getCategoryParam, widenForCustomize, narrowForBack } from "@/lib/category-filter"
 
 export default function CustomizePlanPage() {
   const router = useRouter()
 
-  // Which business-line Plan (Tax Compliance / Buyer / Supplier) the
-  // customer is building a custom plan for -- the catalog below is always
-  // scoped to this, so they only ever see Features actually relevant to
-  // what they picked, not the whole tenant-wide catalog mixed together.
+  // Which business-line Plans (Tax Compliance / Buyer / Supplier) the
+  // customer is building a custom plan from. Multiple can be toggled on at
+  // once -- e.g. Tax Compliance features + Buyer features in the same
+  // plan -- the catalog below is fetched per toggled-on category and
+  // merged, so customers only ever see Features actually relevant to what
+  // they picked, not the whole tenant-wide catalog mixed together.
   const [categories, setCategories] = useState<PublicPlan[]>([])
-  const [selectedCategory, setSelectedCategory] = useState<PublicPlan | null>(null)
+  const [activeCategoryIds, setActiveCategoryIds] = useState<Record<string, boolean>>({})
   const [isLoadingCategories, setIsLoadingCategories] = useState(true)
   const [categoriesError, setCategoriesError] = useState<string | null>(null)
+  const didInitCategoryToggles = useRef(false)
 
   // ?category=tax / ?category=tax,buyer / ?category=all (default) --
-  // same URL filter as the homepage. See lib/category-filter.
+  // same URL filter as the homepage, but widened here (display only --
+  // see widenForCustomize) so arriving via a single "tax" or "buyer" link
+  // still offers both as toggleable categories on the builder itself. The
+  // URL/backHref below deliberately stay on the RAW, unwidened param.
   const visibleCategories = useMemo(
-    () => filterCategoriesByParam(categories, getCategoryParam()),
+    () => filterCategoriesByParam(categories, widenForCustomize(getCategoryParam() || "")),
     [categories]
+  )
+
+  // Every "back to packages" / "Plans" link on this page used to be a bare
+  // href="/" -- that reset the picker to show every category (Buyer, Tax
+  // Compliance, Supplier all at once), leaking business lines a customer
+  // who arrived through a single-category link was never meant to see.
+  // Carrying the current ?category= param back with them keeps the picker
+  // scoped to the same category context they came in with -- the RAW
+  // param, not the widened one above, so a visitor who arrived on "tax"
+  // alone goes back to "tax" alone, not "tax,buyer" (widenForCustomize
+  // only ever affects what's toggleable here, never the URL/back target).
+  // Narrowed one more step by narrowForBack: entry points that link
+  // straight into Customize with "tax,buyer" already combined (e.g.
+  // eopsprimax.com's "Become Agent" button) collapse back to tax-only --
+  // there was never a tax-only or buyer-only picker view for that visitor
+  // to return to, so Tax Compliance (the anchor category) is it.
+  const backHref = useMemo(() => {
+    const categoryParam = getCategoryParam()
+    return categoryParam ? `/?category=${encodeURIComponent(narrowForBack(categoryParam))}` : "/"
+  }, [])
+
+  const selectedCategories = useMemo(
+    () => visibleCategories.filter((c) => activeCategoryIds[c.id]),
+    [visibleCategories, activeCategoryIds]
   )
 
   useEffect(() => {
@@ -82,17 +113,41 @@ export default function CustomizePlanPage() {
     fetchCategories()
   }, [])
 
-  // Skip the picker if the URL narrowed it down to exactly one category.
+  // Land directly on the builder with every visible category toggled on by
+  // default (so there's no separate "pick a category" step) -- unless the
+  // customer is returning from /register, in which case restore whichever
+  // categories they actually had on before. Runs once, the first time
+  // categories become available.
   useEffect(() => {
-    if (selectedCategory) return
-    if (visibleCategories.length === 1) {
-      setSelectedCategory(visibleCategories[0])
-    }
-  }, [visibleCategories, selectedCategory])
+    if (didInitCategoryToggles.current) return
+    if (visibleCategories.length === 0) return
+    didInitCategoryToggles.current = true
+
+    let restoredIds: string[] | null = null
+    try {
+      const cameFromRegister =
+        typeof document !== "undefined" && document.referrer.includes("/register")
+      const raw = cameFromRegister ? localStorage.getItem('customization_data') : null
+      if (raw) {
+        const saved = JSON.parse(raw)
+        if (Array.isArray(saved.categoryIds) && saved.categoryIds.length > 0) {
+          restoredIds = saved.categoryIds
+        } else if (saved.categoryId) {
+          restoredIds = [saved.categoryId]
+        }
+      }
+    } catch { /* ignore parse errors */ }
+
+    const initial: Record<string, boolean> = {}
+    visibleCategories.forEach((c) => {
+      initial[c.id] = restoredIds ? restoredIds.includes(c.id) : true
+    })
+    setActiveCategoryIds(initial)
+  }, [visibleCategories])
 
   const [lang, setLang] = useState<LangKey>("en")
   const [currency, setCurrency] = useState("USD")
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("yearly")
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly")
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [showAddOns, setShowAddOns] = useState(false)
   const addOnsRef = useRef<HTMLDivElement>(null)
@@ -111,57 +166,95 @@ export default function CustomizePlanPage() {
   const restoredFromLocalStorage = useRef(false)
   const VAT_RATE = 0.18
 
-  // Dynamic data states
+  // Dynamic data states. `modules` is the flat, deduped list pricing/
+  // selection logic runs on (a shared module only counted once, no matter
+  // how many toggled-on categories use it). `modulesByCategory` is the
+  // same catalog kept un-deduped and grouped per category, purely for the
+  // horizontal per-category card layout -- toggling an item in one card
+  // still only prices it once, since both read/write the same
+  // `selectedItems` state keyed by SubFeature id.
   const [modules, setModules] = useState<Module[]>([])
+  const [modulesByCategory, setModulesByCategory] = useState<
+    Array<{ category: PublicPlan; modules: Module[] }>
+  >([])
   const [isLoadingModules, setIsLoadingModules] = useState(true)
   const [modulesError, setModulesError] = useState<string | null>(null)
 
   const t = TRANSLATIONS[lang]
   const cur = CURRENCIES[currency]
 
-  // Fetch dynamic data from backend
-  const fetchServicesData = async () => {
+  // Fetch + transform the catalog for a single category (business-line
+  // Plan). Feature -> SubFeature/Addon, flat -- pricing only ever lives on
+  // the SubFeature/Addon, never on the Feature itself. Each SubFeature
+  // becomes a directly priced, directly selectable item -- there's no
+  // third nesting level in the new catalog the way there used to be.
+  const fetchCategoryCatalog = useCallback(async (categoryId: string): Promise<Module[]> => {
+    const data = await billingGraphqlRequest<{ publicCatalog: PublicFeature[] }>(
+      GET_PUBLIC_CATALOG,
+      { planId: categoryId }
+    )
+    return data.publicCatalog
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(feature => ({
+        id: feature.name, // Use name as ID for activeModules compatibility
+        name: feature.name,
+        items: feature.subFeatures.map(sf => {
+          const per: "user" | "flat" =
+            sf.billingType === "PER_USER" || sf.billingType === "PER_DEVICE" ? "user" : "flat"
+          return {
+            id: sf.id,
+            name: sf.name,
+            desc: sf.description,
+            price: Number(sf.price) || 0,
+            per,
+          }
+        }),
+        addons: feature.addons.map(addon => ({
+          id: addon.id,
+          name: addon.name,
+          desc: addon.description,
+          price: Number(addon.unitPrice) || 0,
+          pricingPeriod: addon.billingType === "ANNUAL" ? "yearly" : "monthly",
+        })),
+      }))
+  }, [])
+
+  // Fetch the catalog for every toggled-on category and merge them into one
+  // flat module list (a Feature shared across categories -- e.g. also used
+  // by a Buyer package -- is only kept once, first occurrence wins).
+  const fetchServicesData = useCallback(async () => {
+    if (selectedCategories.length === 0) {
+      setModules([])
+      setModulesByCategory([])
+      setModulesError(null)
+      setIsLoadingModules(false)
+      return
+    }
+
     try {
       setIsLoadingModules(true)
       setModulesError(null)
 
-      const data = await billingGraphqlRequest<{ publicCatalog: PublicFeature[] }>(
-        GET_PUBLIC_CATALOG,
-        { planId: selectedCategory?.id }
+      const perCategory = await Promise.all(
+        selectedCategories.map((c) => fetchCategoryCatalog(c.id))
+      )
+      setModulesByCategory(
+        selectedCategories.map((category, i) => ({ category, modules: perCategory[i] }))
       )
 
-      // Transform the catalog (Feature -> SubFeature/Addon, flat -- pricing
-      // only ever lives on the SubFeature/Addon, never on the Feature
-      // itself) to Module format. Each SubFeature becomes a directly
-      // priced, directly selectable item -- there's no third nesting
-      // level in the new catalog the way there used to be.
-      const transformedModules: Module[] = data.publicCatalog
-        .sort((a, b) => a.sortOrder - b.sortOrder)
-        .map(feature => ({
-          id: feature.name, // Use name as ID for activeModules compatibility
-          name: feature.name,
-          items: feature.subFeatures.map(sf => {
-            const per: "user" | "flat" =
-              sf.billingType === "PER_USER" || sf.billingType === "PER_DEVICE" ? "user" : "flat"
-            return {
-              id: sf.id,
-              name: sf.name,
-              desc: sf.description,
-              price: Number(sf.price) || 0,
-              per,
-            }
-          }),
-          addons: feature.addons.map(addon => ({
-            id: addon.id,
-            name: addon.name,
-            desc: addon.description,
-            price: Number(addon.unitPrice) || 0,
-            pricingPeriod: addon.billingType === "ANNUAL" ? "yearly" : "monthly",
-          })),
-        }))
+      const seen = new Set<string>()
+      const transformedModules: Module[] = []
+      for (const mods of perCategory) {
+        for (const mod of mods) {
+          if (seen.has(mod.id)) continue
+          seen.add(mod.id)
+          transformedModules.push(mod)
+        }
+      }
 
       if (transformedModules.length === 0) {
         setModulesError('No services found. Please check your backend data.')
+        setModules([])
       } else {
         setModules(transformedModules)
 
@@ -207,14 +300,12 @@ export default function CustomizePlanPage() {
     } finally {
       setIsLoadingModules(false)
     }
-  }
+  }, [selectedCategories, fetchCategoryCatalog])
 
-  // Fetch the catalog once a category (business-line Plan) is chosen, and
-  // again if the customer switches category.
+  // Fetch the catalog whenever the set of toggled-on categories changes.
   useEffect(() => {
-    if (!selectedCategory) return
     fetchServicesData()
-  }, [selectedCategory])
+  }, [fetchServicesData])
 
   // Initialize items as NOT selected by default (skip if state was restored from localStorage)
   useEffect(() => {
@@ -341,46 +432,17 @@ export default function CustomizePlanPage() {
           vatAmount,
           totalCost,
         },
-        // Business-line category (Tax Compliance / Buyer / Supplier) this
-        // custom build is scoped to -- selected_plan carries this for
-        // pre-built plans, but that key is cleared above, so register/
-        // page.tsx needs it here instead to know which destination system
-        // (if any) to provision the account in.
-        categoryId: selectedCategory?.id,
-        categoryName: selectedCategory?.name,
+        // Business-line categories (Tax Compliance / Buyer / Supplier) this
+        // custom build is scoped to -- selected_plan carries a single one
+        // for pre-built plans, but that key is cleared above, so register/
+        // page.tsx needs it here instead to know which destination
+        // system(s) (if any) to provision the account in. Plural because
+        // multiple categories can be toggled on at once.
+        categoryIds: selectedCategories.map((c) => c.id),
+        categoryNames: selectedCategories.map((c) => c.name),
       }))
       router.push('/register')
     }
-  }
-
-  // Gate: pick a category (Tax Compliance / Buyer / Supplier) before
-  // showing any Features/SubFeatures to build a custom plan from — the
-  // catalog fetch above is scoped to whichever one is chosen.
-  if (!selectedCategory) {
-    return (
-      <div className="min-h-screen bg-background">
-        <header className="px-4 py-6 lg:px-12">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-widest hover:bg-primary/15 transition-all border border-primary/20"
-          >
-            <ChevronLeft className="h-4 w-4" /> Back to pricing
-          </Link>
-        </header>
-        {isLoadingCategories ? (
-          <div className="flex items-center justify-center py-24">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : categoriesError ? (
-          <div className="flex flex-col items-center justify-center gap-4 py-24">
-            <AlertCircle className="h-8 w-8 text-destructive" />
-            <p className="text-sm text-muted-foreground">{categoriesError}</p>
-          </div>
-        ) : (
-          <CategorySelector categories={visibleCategories} onSelect={setSelectedCategory} />
-        )}
-      </div>
-    )
   }
 
   return (
@@ -396,6 +458,11 @@ export default function CustomizePlanPage() {
           setLang={setLang}
           currency={currency}
           setCurrency={setCurrency}
+          categories={visibleCategories}
+          activeCategoryIds={activeCategoryIds}
+          onToggleCategory={(id) => setActiveCategoryIds((p) => ({ ...p, [id]: !p[id] }))}
+          categoriesLoading={isLoadingCategories}
+          categoriesError={categoriesError}
         />
       </aside>
 
@@ -408,10 +475,10 @@ export default function CustomizePlanPage() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="font-bold text-primary italic">eOpsPrimax</span>
+        <BrandLogo className="h-6 max-w-[110px]" />
         <div className="flex items-center gap-2">
           <ThemeToggleFloating />
-          <Link href="/" className="p-2 text-muted-foreground text-xs font-medium">
+          <Link href={backHref} className="p-2 text-muted-foreground text-xs font-medium">
             Plans
           </Link>
         </div>
@@ -433,20 +500,13 @@ export default function CustomizePlanPage() {
               <p className="text-xs sm:text-sm text-muted-foreground font-medium max-w-lg mx-auto leading-relaxed">
                 {t.subtitle}
               </p>
-              <button
-                onClick={() => setSelectedCategory(null)}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary hover:bg-secondary/80 border border-border text-xs font-semibold text-foreground transition-colors"
-              >
-                {selectedCategory.name}
-                <span className="text-muted-foreground font-normal">· change category</span>
-              </button>
             </div>
 
             {/* Control row: Back button on left, billing toggle on right --
                 stacks on narrow screens so the toggle never gets squeezed */}
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <Link
-                href="/"
+                href={backHref}
                 className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-widest hover:bg-primary/15 transition-all border border-primary/20 shrink-0"
               >
                 <ChevronLeft className="h-4 w-4" /> {t.goBack}
@@ -492,7 +552,17 @@ export default function CustomizePlanPage() {
         {/* Features + SubFeatures — a single flat list, always fully
             visible: pick a Feature's SubFeatures directly, no "activate
             this feature first" step. */}
-        <div className="py-4 px-4 lg:px-0">
+        <div className="py-4 px-4 lg:px-0 max-w-7xl mx-auto w-full">
+          {/* No category toggled on */}
+          {!isLoadingModules && !modulesError && selectedCategories.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-3 min-h-[400px] text-center">
+              <Layers className="h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                Toggle at least one category in the sidebar to see its modules.
+              </p>
+            </div>
+          )}
+
           {/* Loading State */}
           {isLoadingModules && (
             <div className="flex flex-col items-center justify-center gap-4 min-h-[400px] text-center">
@@ -518,9 +588,9 @@ export default function CustomizePlanPage() {
           )}
 
           {/* Success State */}
-          {!isLoadingModules && !modulesError && (
+          {!isLoadingModules && !modulesError && selectedCategories.length > 0 && (
             <FeatureList
-              modules={modules}
+              categorizedModules={modulesByCategory}
               selectedItems={selectedItems}
               onToggleItem={(itemId) => setSelectedItems((p) => ({ ...p, [itemId]: !p[itemId] }))}
               billingCycle={billingCycle}
@@ -550,7 +620,7 @@ export default function CustomizePlanPage() {
             {/* Left - back + invoice summary */}
             <div className="hidden sm:flex items-center gap-3">
               <Link
-                href="/"
+                href={backHref}
                 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5 hover:text-primary transition-colors"
               >
                 <ChevronLeft className="h-3.5 w-3.5" /> {t.back}
@@ -649,6 +719,11 @@ export default function CustomizePlanPage() {
               setLang={setLang}
               currency={currency}
               setCurrency={setCurrency}
+              categories={visibleCategories}
+              activeCategoryIds={activeCategoryIds}
+              onToggleCategory={(id) => setActiveCategoryIds((p) => ({ ...p, [id]: !p[id] }))}
+              categoriesLoading={isLoadingCategories}
+              categoriesError={categoriesError}
             />
           </aside>
         </>

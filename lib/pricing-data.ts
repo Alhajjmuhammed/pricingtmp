@@ -14,6 +14,8 @@ export type Plan = {
   previousPlan?: string
   cta: string
   ctaVariant: "default" | "outline"
+  // Days of free trial this package grants on signup (0/undefined = none).
+  freeTierLimit?: number
 }
 
 export const plans: Plan[] = [

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card } from "@/components/ui/card"
+import { BrandLogo } from "@/components/brand-logo"
 import { registerPersonalAccount, loginPersonalAccount, createPersonalProfile, createOrganization, requestEmailVerificationCode, verifyEmailCode, resendEmailVerificationCode } from "@/services"
 import { syncUserToWellongeId } from "@/services/wellongeid/wellongeIdSyncService"
 import {
@@ -25,9 +26,11 @@ import {
   GET_PUBLIC_CATALOG,
   REGISTER_SUBSCRIPTION,
   REGISTER_CUSTOM_SUBSCRIPTION,
+  VALIDATE_PROMO_CODE,
   type PublicFeature,
   type RegisterSubscriptionResult,
   type RegisterCustomSubscriptionResult,
+  type PromoCodeValidationResult,
 } from "@/lib/graphql-client"
 
 const COUNTRY_CODES = [
@@ -302,6 +305,53 @@ export default function RegisterPage() {
   // Selected plan/customization data
   const [selectedPlan, setSelectedPlan] = useState<any>(null)
   const [customizationData, setCustomizationData] = useState<any>(null)
+
+  // Promo code -- only meaningful for a pre-built plan billed annually
+  // (PromoCode's fixed rule; see lib/graphql-client.ts). promoResult is
+  // the last validatePromoCode response; promoResult.valid gates showing
+  // the discounted price and is what actually gets sent as promoCode on
+  // submit (an unvalidated or rejected code is never passed through).
+  const [promoCodeInput, setPromoCodeInput] = useState("")
+  const [promoValidating, setPromoValidating] = useState(false)
+  const [promoResult, setPromoResult] = useState<PromoCodeValidationResult | null>(null)
+
+  const handleApplyPromoCode = async () => {
+    const code = promoCodeInput.trim()
+    if (!code || !selectedPlan?.planId) return
+    setPromoValidating(true)
+    setPromoResult(null)
+    try {
+      const result = await billingGraphqlRequest<{ validatePromoCode: PromoCodeValidationResult }>(
+        VALIDATE_PROMO_CODE,
+        { code, packageId: selectedPlan.planId, billingCycle: 'ANNUAL' }
+      )
+      setPromoResult(result.validatePromoCode)
+    } catch (err: any) {
+      setPromoResult({
+        valid: false,
+        message: err?.message || 'Could not validate promo code. Please try again.',
+        discountPercentage: 0,
+        disablesFreeTrial: false,
+        effectiveAnnualPrice: 0,
+        currency: 'USD',
+      })
+    } finally {
+      setPromoValidating(false)
+    }
+  }
+
+  const handleClearPromoCode = () => {
+    setPromoCodeInput("")
+    setPromoResult(null)
+  }
+
+  // "Back to pricing" used to be a bare href="/" -- that reset the picker
+  // to show every business-line category (Buyer, Tax Compliance, Supplier
+  // all at once), leaking categories a customer mid-registration for just
+  // one of them was never meant to see. Derived below, on mount, from the
+  // same selected_plan/customization_data localStorage this page already
+  // reads to restore the rest of its state.
+  const [backHref, setBackHref] = useState("/")
 
   // Editing states for review page
   const [editingAccount, setEditingAccount] = useState(false)
@@ -623,6 +673,10 @@ export default function RegisterPage() {
       const parsedPlan = JSON.parse(planData)
       setSelectedPlan(parsedPlan)
 
+      if (parsedPlan.categoryName) {
+        setBackHref(`/?category=${encodeURIComponent(parsedPlan.categoryName)}`)
+      }
+
       // Pre-built plan (has planId) — forcefully discard any stale customization data
       if (parsedPlan.planId) {
         localStorage.removeItem('customization_data')
@@ -633,7 +687,13 @@ export default function RegisterPage() {
     if (customData) {
       const savedData = JSON.parse(customData)
       setCustomizationData(savedData)
-      
+
+      if (Array.isArray(savedData.categoryNames) && savedData.categoryNames.length > 0) {
+        setBackHref(`/?category=${encodeURIComponent(savedData.categoryNames.join(","))}`)
+      } else if (savedData.categoryName) {
+        setBackHref(`/?category=${encodeURIComponent(savedData.categoryName)}`)
+      }
+
       // Immediately populate state from localStorage for display mode
       // Handle both new format (from register edit) and old format (from customize page)
       if (savedData.selectedServices) {
@@ -895,10 +955,11 @@ export default function RegisterPage() {
       let planNameNote = ''
       let selectedPackageId: string | null = null // real billing Package UUID, if a pre-built plan was chosen
       let selectedPackageName: string = ''
-      let selectedCategoryName: string | null = null // Tax Compliance / Buyer / Supplier -- which destination system (if any) to also provision
+      let selectedCategoryNames: string[] = [] // Tax Compliance / Buyer / Supplier -- which destination system(s) (if any) to also provision. A custom plan can have more than one.
       let purchasedModuleNames: string[] = [] // wellongepay Feature/module names actually purchased -- scopes destination-system dashboard access to what was bought
       let destinationAccessToken: string | null = null // the destination system's own JWT, returned directly by registerFirm/register -- used to auto-login the user into that system's dashboard on the success page
       let destinationRefreshToken: string | null = null
+      let primaryDestinationSystem: ReturnType<typeof resolveDestinationSystem> = null // whichever destination system's token actually got captured above -- the one the success page auto-logs into, when a plan spans more than one
 
       const storedPlan = localStorage.getItem('selected_plan')
       if (storedPlan) {
@@ -918,20 +979,27 @@ export default function RegisterPage() {
           resolvedBillingPeriod = (planData.billingCycle === 'annual' || planData.billingCycle === 'annually' || planData.billingCycle === 'yearly') ? 'yearly' : 'monthly'
           if (planData.name) planNameNote = `Pre-built plan: ${planData.name}`
           selectedPackageName = planData.name || ''
-          selectedCategoryName = planData.categoryName || null
+          if (planData.categoryName) selectedCategoryNames = [planData.categoryName]
         } catch (e) {
           console.warn('Could not parse selected_plan, defaulting to custom')
         }
       }
 
       // Custom (build-your-own) plans clear selected_plan entirely on
-      // /customize, so the category has to come from customization_data
-      // instead -- see the categoryId/categoryName written there.
-      if (!selectedCategoryName) {
+      // /customize, so the categories have to come from customization_data
+      // instead -- see the categoryIds/categoryNames written there. Multiple
+      // categories can be toggled on at once on /customize (e.g. Tax
+      // Compliance + Buyer in the same plan).
+      if (selectedCategoryNames.length === 0) {
         try {
           const customDataRaw = localStorage.getItem('customization_data')
           if (customDataRaw) {
-            selectedCategoryName = JSON.parse(customDataRaw).categoryName || null
+            const customData = JSON.parse(customDataRaw)
+            if (Array.isArray(customData.categoryNames) && customData.categoryNames.length > 0) {
+              selectedCategoryNames = customData.categoryNames
+            } else if (customData.categoryName) {
+              selectedCategoryNames = [customData.categoryName]
+            }
           }
         } catch (e) {
           // ignore parse errors
@@ -1082,13 +1150,19 @@ export default function RegisterPage() {
       try {
         await withRetry(async () => {
           if (selectedPackageId) {
-            // Pre-built plan — subscribe straight to the chosen Package
+            // Pre-built plan — subscribe straight to the chosen Package.
+            // promoCode is only sent when a code was actually validated
+            // successfully against THIS package+cycle (promoResult.valid)
+            // -- the backend re-validates it again regardless, but there's
+            // no reason to forward a code the customer typed and never
+            // successfully applied.
             const subResult = await billingGraphqlRequest<RegisterSubscriptionResult>(
               REGISTER_SUBSCRIPTION,
               {
                 packageId: selectedPackageId,
                 ownerWalletId: newAccountId,
                 billingCycle: billingCycleUpper,
+                promoCode: promoResult?.valid ? promoCodeInput.trim() : undefined,
               }
             )
             console.log('✅ Subscription created:', subResult.registerSubscription?.subscriptionId)
@@ -1147,8 +1221,10 @@ export default function RegisterPage() {
       // eopsprimax.com) -- its own ServiceCategory/Feature catalog uses
       // different IDs than wellongepay's, so this free-text summary is
       // what makes the purchase visible there at all.
-      const purchasePrice = selectedPackageId ? (selectedPlan?.price ?? null) : calculateTotal()
-      const purchaseSummary = `Purchased: ${selectedCategoryName || 'Custom'} - ${selectedPackageName || 'Custom Plan'}` +
+      const purchasePrice = selectedPackageId
+        ? (promoResult?.valid ? promoResult.effectiveAnnualPrice : selectedPlan?.price ?? null)
+        : calculateTotal()
+      const purchaseSummary = `Purchased: ${selectedCategoryNames.length > 0 ? selectedCategoryNames.join(' + ') : 'Custom'} - ${selectedPackageName || 'Custom Plan'}` +
         (purchasePrice != null ? ` ($${Number(purchasePrice).toFixed(2)}/${resolvedBillingPeriod === 'yearly' ? 'yr' : 'mo'})` : '') +
         (purchasedModuleNames.length > 0 ? ` - Modules: ${purchasedModuleNames.join(', ')}` : '')
 
@@ -1178,13 +1254,24 @@ export default function RegisterPage() {
         console.warn('⚠️ Could not register in Client User Management (non-blocking):', cmErr?.message)
       }
 
-      // Step 4.6: Provision the account in the actual product they
+      // Step 4.6: Provision the account in the actual product(s) they
       // subscribed to (Tax Compliance / Buyer / Supplier), based on the
-      // category chosen on the pricing page. Retried, non-blocking.
-      // Custom-plan registrations (no category) skip this — there's no
-      // single destination system to provision.
-      const destinationSystem = resolveDestinationSystem(selectedCategoryName || undefined)
-      if (destinationSystem === 'tax_compliance') {
+      // category(ies) chosen on the pricing page or toggled on together on
+      // /customize. Retried, non-blocking. Custom-plan registrations with
+      // no category skip this — there's no destination system to
+      // provision. The first destination system to successfully return a
+      // token becomes the one the success page auto-logs the user into —
+      // a customer can only land on one dashboard immediately after
+      // registering, even if their plan spans more than one product.
+      const destinationSystems = Array.from(
+        new Set(
+          selectedCategoryNames
+            .map((name) => resolveDestinationSystem(name))
+            .filter((s): s is NonNullable<ReturnType<typeof resolveDestinationSystem>> => !!s)
+        )
+      )
+
+      if (destinationSystems.includes('tax_compliance')) {
         console.log('📝 Step 4.6: Registering with Tax Compliance platform...')
         try {
           const tcResult = await withRetry(() => registerWithTaxCompliance({
@@ -1200,13 +1287,19 @@ export default function RegisterPage() {
             purchasedModules: mapToTaxComplianceModules(purchasedModuleNames),
           }))
           provisioningResults.taxCompliancePlatform = true
-          destinationAccessToken = tcResult?.accessToken || null
-          destinationRefreshToken = tcResult?.refreshToken || null
+          if (!destinationAccessToken) {
+            destinationAccessToken = tcResult?.accessToken || null
+            destinationRefreshToken = tcResult?.refreshToken || null
+            primaryDestinationSystem = 'tax_compliance'
+          }
           console.log('✅ Registered with Tax Compliance platform:', tcResult?.message)
         } catch (tcErr: any) {
           console.warn('⚠️ Could not register with Tax Compliance platform (non-blocking):', tcErr?.message)
         }
-      } else if (destinationSystem === 'buyer' || destinationSystem === 'supplier') {
+      }
+
+      for (const destinationSystem of destinationSystems) {
+        if (destinationSystem !== 'buyer' && destinationSystem !== 'supplier') continue
         console.log(`📝 Step 4.6: Registering with Supplier Connect platform (${destinationSystem})...`)
         try {
           const spResult = await withRetry(() => registerWithSupplierPlatform({
@@ -1222,8 +1315,11 @@ export default function RegisterPage() {
             purchasedModules: mapToSupplierPlatformModules(purchasedModuleNames),
           }))
           provisioningResults.supplierConnectPlatform = true
-          destinationAccessToken = spResult?.accessToken || null
-          destinationRefreshToken = spResult?.refreshToken || null
+          if (!destinationAccessToken) {
+            destinationAccessToken = spResult?.accessToken || null
+            destinationRefreshToken = spResult?.refreshToken || null
+            primaryDestinationSystem = destinationSystem
+          }
           console.log('✅ Registered with Supplier Connect platform:', spResult?.user?.id)
         } catch (spErr: any) {
           console.warn('⚠️ Could not register with Supplier Connect platform (non-blocking):', spErr?.message)
@@ -1272,8 +1368,10 @@ export default function RegisterPage() {
         // Which destination product (if any) got provisioned, and its own
         // JWT (returned directly by registerFirm/register) -- lets the
         // success page auto-login the user straight into that system's
-        // dashboard instead of dropping them at a login screen.
-        destinationSystem,
+        // dashboard instead of dropping them at a login screen. A plan can
+        // span more than one destination system (see destinationSystems
+        // above); this is only the primary one the success page logs into.
+        destinationSystem: primaryDestinationSystem,
         destinationAccessToken,
         destinationRefreshToken,
         // The user's own Wellonge ID identity tokens (from Step 1b's login)
@@ -1305,7 +1403,10 @@ export default function RegisterPage() {
       <div className="w-full max-w-5xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6">
+          <div className="mb-6 flex justify-center">
+            <BrandLogo />
+          </div>
+          <Link href={backHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6">
             <ArrowLeft className="h-4 w-4" />
             Back to pricing
           </Link>
@@ -1440,19 +1541,6 @@ export default function RegisterPage() {
                     <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                   </svg>
                   Sign in with Google
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  size="lg"
-                  onClick={() => { /* Apple OAuth */ }}
-                >
-                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-label="Apple">
-                    <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.4.07 2.38.74 3.2.8 1.22-.24 2.38-.93 3.7-.84 1.58.12 2.76.72 3.54 1.88-3.25 1.97-2.48 5.9.54 7.05-.58 1.5-1.33 2.98-2.98 3.99M12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25"/>
-                  </svg>
-                  Sign in with Apple
                 </Button>
               </div>
             </div>
@@ -2167,11 +2255,73 @@ export default function RegisterPage() {
                             )}
                             {selectedPlan.price && (
                               <p className="text-sm font-semibold text-primary mt-1">
-                                ${selectedPlan.price}/seat/mo{selectedPlan.billing === 'annual' ? ' · billed annually' : ''}
+                                {promoResult?.valid ? (
+                                  <>
+                                    <span className="line-through text-muted-foreground mr-1.5">${selectedPlan.price}/seat/mo</span>
+                                    ${promoResult.effectiveAnnualPrice}/seat/mo · billed annually
+                                  </>
+                                ) : (
+                                  <>${selectedPlan.price}/seat/mo{selectedPlan.billing === 'annual' ? ' · billed annually' : ''}</>
+                                )}
+                              </p>
+                            )}
+                            {/* A valid promo code disables the free trial
+                                (backend's fixed rule -- see registerSubscription/
+                                _finish_subscription), so don't advertise a
+                                trial that won't actually apply once one's used. */}
+                            {!!selectedPlan.freeTierLimit && !promoResult?.valid && (
+                              <p className="text-sm font-semibold text-primary mt-1">
+                                {selectedPlan.freeTierLimit}-day free trial — you won't be charged until it ends
                               </p>
                             )}
                           </div>
-                          
+
+                          {/* Promo code -- PromoCode's fixed rule (see
+                              lib/graphql-client.ts) only ever discounts
+                              annual billing, so there's nothing to offer
+                              here for a monthly selection. */}
+                          {selectedPlan.billing === 'annual' && (
+                            <div className="pt-1">
+                              {!promoResult?.valid ? (
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={promoCodeInput}
+                                    onChange={(e) => { setPromoCodeInput(e.target.value.toUpperCase()); if (promoResult) setPromoResult(null) }}
+                                    placeholder="Promo code"
+                                    className="h-9 text-sm font-mono"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleApplyPromoCode() } }}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-9 shrink-0"
+                                    disabled={!promoCodeInput.trim() || promoValidating}
+                                    onClick={handleApplyPromoCode}
+                                  >
+                                    {promoValidating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Apply'}
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between rounded-md bg-primary/10 px-3 py-2">
+                                  <span className="text-xs font-medium text-primary flex items-center gap-1.5">
+                                    <Check className="h-3.5 w-3.5" />
+                                    &quot;{promoCodeInput.trim().toUpperCase()}&quot; applied — {promoResult.discountPercentage}% off
+                                  </span>
+                                  <button type="button" onClick={handleClearPromoCode} className="text-xs text-muted-foreground hover:text-foreground underline">
+                                    Remove
+                                  </button>
+                                </div>
+                              )}
+                              {promoResult && !promoResult.valid && (
+                                <p className="text-xs text-destructive mt-1">{promoResult.message}</p>
+                              )}
+                              {promoResult?.valid && promoResult.disablesFreeTrial && (
+                                <p className="text-xs text-muted-foreground mt-1">Applying this code skips any free trial for this plan.</p>
+                              )}
+                            </div>
+                          )}
+
                           {selectedPlan.features && selectedPlan.features.length > 0 && (
                             <div>
                               <p className="text-xs font-semibold text-muted-foreground mb-2">INCLUDED FEATURES</p>
@@ -2874,12 +3024,25 @@ export default function RegisterPage() {
                   <div className="space-y-2">
                     {selectedPlan ? (
                       <div className="flex justify-between text-sm">
-                        <span>{selectedPlan.name || 'Plan'}</span>
+                        <span>{selectedPlan.name || 'Plan'}{promoResult?.valid ? ' (promo applied)' : ''}</span>
                         <span className="font-medium">
-                          ${selectedPlan.price || 0}/month{selectedPlan.billing === 'annual' ? ' (annual)' : ''}
+                          {promoResult?.valid ? (
+                            <>
+                              <span className="line-through text-muted-foreground mr-1">${selectedPlan.price || 0}</span>
+                              ${promoResult.effectiveAnnualPrice}/month (annual)
+                            </>
+                          ) : (
+                            <>${selectedPlan.price || 0}/month{selectedPlan.billing === 'annual' ? ' (annual)' : ''}</>
+                          )}
                         </span>
                       </div>
-                    ) : (
+                    ) : null}
+                    {selectedPlan && !!selectedPlan.freeTierLimit && !promoResult?.valid && (
+                      <p className="text-xs font-semibold text-primary">
+                        Your card is required to continue, but you won't be charged for {selectedPlan.freeTierLimit} days. Cancel anytime before then to avoid any charge.
+                      </p>
+                    )}
+                    {!selectedPlan && (
                       <div className="flex justify-between text-sm text-muted-foreground">
                         <span>No plan selected</span>
                         <span>$0</span>
@@ -2904,7 +3067,9 @@ export default function RegisterPage() {
                         <span className="font-semibold text-lg">Total</span>
                         <span className="text-2xl font-bold text-primary">
                           ${(() => {
-                            const planPrice = selectedPlan && !customizationData ? (selectedPlan?.price || 0) : 0
+                            const planPrice = selectedPlan && !customizationData
+                              ? (promoResult?.valid ? promoResult.effectiveAnnualPrice : (selectedPlan?.price || 0))
+                              : 0
                             const customizationTotal = customizationData ? calculateTotal() : 0
                             return (planPrice + customizationTotal).toFixed(2)
                           })()}
@@ -3094,12 +3259,18 @@ export default function RegisterPage() {
                           <span className="font-medium capitalize">{selectedPlan.billing}</span>
                         </div>
                       )}
+                      {promoResult?.valid && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Promo code</span>
+                          <span className="font-medium text-primary">-{promoResult.discountPercentage}%</span>
+                        </div>
+                      )}
                       <div className="flex justify-between border-t pt-1.5 mt-1.5 font-semibold">
                         <span>Total</span>
                         <span className="text-primary">
                           ${customizationData
                             ? (customizationData.totalPrice || customizationData.pricing?.totalCost || 0).toFixed(2)
-                            : (selectedPlan?.price || 0).toFixed(2)
+                            : (promoResult?.valid ? promoResult.effectiveAnnualPrice : (selectedPlan?.price || 0)).toFixed(2)
                           }/mo
                         </span>
                       </div>

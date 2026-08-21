@@ -138,6 +138,92 @@ export interface ClientManagementInput {
   purchaseSummary?: string;
 }
 
+// ─── Admin-drafted invitation (Client Management "finish registration") ───
+
+const INVITATION_DETAILS_QUERY = `
+  query InvitationDetails($token: String!) {
+    invitationDetails(token: $token) {
+      clientId
+      firstName
+      lastName
+      primaryEmail
+      name
+      status
+      currency
+      categoryName
+      packageName
+      billingCycle
+      subFeatureSelections { subFeatureId name price quantity }
+      addonSelections { addonId name unitPrice quantity }
+    }
+  }
+`;
+
+// subFeatureId/addonId here are REAL wellongepay catalog IDs (the admin's
+// picker in Client Management sources live from wellongepay's own public
+// catalog -- see save_client_invitation_plan) -- they can be sent directly
+// to registerCustomSubscription below with no translation step.
+export interface InvitationDetails {
+  clientId: number;
+  firstName: string;
+  lastName: string;
+  primaryEmail: string;
+  name: string;
+  status: string;
+  currency: string;
+  categoryName: string | null; // e.g. "Tax Compliance Agents" / "Buyer" / "Supplier" -- feeds resolveDestinationSystem
+  packageName: string | null;
+  billingCycle: string;
+  subFeatureSelections: Array<{ subFeatureId: string; name: string; price: number; quantity: number }>;
+  addonSelections: Array<{ addonId: string; name: string; unitPrice: number; quantity: number }>;
+}
+
+/**
+ * Public, token-gated lookup for the client-facing finish-registration
+ * page (pricingtmp's own /invite/[token]) — resolves an admin-drafted
+ * Client (Client Management) by its one-time invitation token. Returns
+ * null if the token is unknown, expired, or no plan has been configured
+ * for it yet.
+ */
+export async function getInvitationDetails(token: string): Promise<InvitationDetails | null> {
+  const data = await graphqlPost<{ invitationDetails: InvitationDetails | null }>(
+    CLIENT_MGMT_GRAPHQL_URL,
+    INVITATION_DETAILS_QUERY,
+    { token }
+  );
+  return data.invitationDetails;
+}
+
+const FINALIZE_CLIENT_FROM_INVITATION = `
+  mutation FinalizeClientFromInvitation($token: String!, $personalAccountId: String!, $subscriptionId: String) {
+    finalizeClientFromInvitation(token: $token, personalAccountId: $personalAccountId, subscriptionId: $subscriptionId) {
+      success
+      message
+      client { id status }
+    }
+  }
+`;
+
+/**
+ * Flips the already-drafted Client (created by an admin via Client
+ * Management) from 'draft' to 'active' once the invited client has
+ * finished Wellonge ID registration + billing. Does NOT create new
+ * Organization/selection rows — those already exist from the admin's
+ * draft — this only links the real account and marks it complete.
+ */
+export async function finalizeClientFromInvitation(
+  token: string,
+  personalAccountId: string,
+  subscriptionId?: string
+): Promise<{ success: boolean; message: string }> {
+  const data = await graphqlPost<{ finalizeClientFromInvitation: { success: boolean; message: string } }>(
+    CLIENT_MGMT_GRAPHQL_URL,
+    FINALIZE_CLIENT_FROM_INVITATION,
+    { token, personalAccountId, subscriptionId }
+  );
+  return data.finalizeClientFromInvitation;
+}
+
 export async function registerWithClientManagement(input: ClientManagementInput) {
   const data = await graphqlPost<{ completeOnboarding: { success: boolean; message: string; clientId: number | null; organizationId: string | null } }>(
     CLIENT_MGMT_GRAPHQL_URL,

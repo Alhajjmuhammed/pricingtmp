@@ -182,7 +182,7 @@ ${lines.join("\n\n")}
   Per ${periodLabel}
 =====================================
   Generated: ${now.toLocaleString()}
-  Thank you for choosing eOpsEntre.
+  Thank you for choosing eOpsPrimax.
 =====================================
 `
     const blob = new Blob([data], { type: "text/plain" })

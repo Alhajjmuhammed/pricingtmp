@@ -4,7 +4,7 @@ export function SiteFooter() {
       <div className="mx-auto max-w-7xl px-4 py-6">
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           <p className="text-sm text-muted-foreground">
-            2026 eOpsEntre. All rights reserved.
+            2026 eOpsPrimax. All rights reserved.
           </p>
           <p className="text-xs text-muted-foreground">
             Prices shown are VAT exclusive. VAT will be applied where

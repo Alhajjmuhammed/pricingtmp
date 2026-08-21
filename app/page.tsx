@@ -16,7 +16,7 @@ interface PublicPlansResponse {
 }
 
 export default function PricingPage() {
-  const [isAnnual, setIsAnnual] = useState(true)
+  const [isAnnual, setIsAnnual] = useState(false)
   const [categories, setCategories] = useState<PublicPlan[]>([])
   const [selectedCategory, setSelectedCategory] = useState<PublicPlan | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -122,7 +122,7 @@ export default function PricingPage() {
               categoryId={selectedCategory.id}
               categoryName={selectedCategory.name}
             />
-            <ComparePlansButton />
+            <ComparePlansButton planId={selectedCategory.id} />
           </>
         )}
       </main>

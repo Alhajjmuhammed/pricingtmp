@@ -51,6 +51,17 @@ export function PricingCard({
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const handleCTAClick = () => {
+    // Enterprise's CTA is "Contact Sales" -- there's no pre-built package
+    // to check out with, so send them to the plan builder (pre-scoped to
+    // this card's category) instead of the registration/payment flow.
+    if (plan.cta?.toLowerCase().includes('contact sales')) {
+      const href = categoryName
+        ? `/customize?category=${encodeURIComponent(categoryName)}`
+        : '/customize'
+      router.push(href)
+      return
+    }
+
     localStorage.setItem('selected_plan', JSON.stringify({
       planId: plan.id,
       name: plan.name,
@@ -64,6 +75,11 @@ export function PricingCard({
       // destination system (if any) to also provision the account in.
       categoryId,
       categoryName,
+      // Display-only -- the backend independently decides real trial
+      // eligibility from the package's own free_tier_limit at checkout,
+      // this is just so the review/success steps can tell the customer
+      // what to expect before they pay.
+      freeTierLimit: plan.freeTierLimit || 0,
     }))
     // Clear any previous custom plan data — user picked a pre-built plan
     localStorage.removeItem('customization_data')
@@ -129,6 +145,11 @@ export function PricingCard({
               ${plan.monthlyPrice}/mo if billed monthly
             </p>
           )}
+          {!!plan.freeTierLimit && (
+            <p className="mt-2 text-xs font-semibold text-primary">
+              {plan.freeTierLimit}-day free trial, no charge until it ends
+            </p>
+          )}
         </div>
 
         {/* CTA */}
@@ -186,6 +207,17 @@ export function PricingCard({
   )
 }
 
+// A rigid 4-column grid leaves a gaping, unbalanced hole on the right
+// whenever a category has fewer than 4 plans (3 is the common case) --
+// sizing the grid (and its max-width) to the actual plan count keeps any
+// row of 1-4 cards centered and evenly filled instead of left-stuck.
+const GRID_LAYOUT: Record<number, string> = {
+  1: "grid-cols-1 max-w-sm",
+  2: "grid-cols-1 sm:grid-cols-2 max-w-2xl",
+  3: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl",
+}
+const DEFAULT_GRID_LAYOUT = "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 max-w-6xl"
+
 export function PricingCards({
   plans,
   isAnnual,
@@ -197,9 +229,11 @@ export function PricingCards({
   categoryId?: string
   categoryName?: string
 }) {
+  const gridLayout = GRID_LAYOUT[plans.length] || DEFAULT_GRID_LAYOUT
+
   return (
-    <section className="mx-auto max-w-6xl px-4 pb-16">
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+    <section className="px-4 pb-16">
+      <div className={cn("mx-auto grid gap-6", gridLayout)}>
         {plans.map((plan) => (
           <PricingCard
             key={plan.id}

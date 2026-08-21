@@ -9,7 +9,7 @@ const _inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const _jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains' })
 
 export const metadata: Metadata = {
-  title: 'Pricing & Plans - Choose Your Perfect Plan',
+  title: 'eOpsPrimax | Pricing & Plans',
   description: 'Flexible pricing plans designed to scale with your business. Compare features and find the plan that fits your needs.',
   icons: {
     icon: [
@@ -20,10 +20,6 @@ export const metadata: Metadata = {
       {
         url: '/icon-dark-32x32.png',
         media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
       },
     ],
     apple: '/apple-icon.png',

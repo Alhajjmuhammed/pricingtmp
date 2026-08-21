@@ -82,7 +82,7 @@ export async function registerPersonalAccount(input: {
     let errorType: OnboardingErrorType = 'UNKNOWN_ERROR';
     let errorMessage = response.message || 'Failed to register account';
 
-    if (message.includes('409') || message.includes('already registered')) {
+    if (message.includes('409') || message.includes('already registered') || message.includes('already exists')) {
       errorType = 'EMAIL_EXISTS';
       errorMessage = 'This email is already registered. Please log in.';
     } else if (message.includes('429') || message.includes('rate limit')) {

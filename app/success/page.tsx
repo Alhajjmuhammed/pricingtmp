@@ -5,6 +5,7 @@ import Link from "next/link"
 import { CheckCircle2, ArrowRight, Mail, Building2, User, Briefcase } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { BrandLogo } from "@/components/brand-logo"
 
 // Each destination product's own frontend, and the dashboard-label to show
 // for it. The token-handoff route on each of these accepts the destination
@@ -55,6 +56,9 @@ export default function SuccessPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-background flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
+        <div className="mb-6 flex justify-center">
+          <BrandLogo />
+        </div>
         <Card className="p-12 text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 text-green-500 mb-6">
             <CheckCircle2 className="h-10 w-10" />

@@ -52,10 +52,14 @@ export async function billingGraphqlRequest<T>(
 
 // ============ GRAPHQL QUERIES ============
 
-// Pre-built plans for the main pricing page
+// Flat package list for the "Compare plans in detail" modal. planId
+// scopes this to one business-line category (Buyer / Tax Compliance /
+// Supplier) -- without it, every category's same-named tiers (each has
+// its own Starter/Professional/Enterprise) come back side by side as if
+// they were price variants of a single plan.
 export const GET_PRICING_PLANS = `
-  query GetPricingPlans($tenantId: ID!) {
-    publicPricingPackages(tenantId: $tenantId) {
+  query GetPricingPlans($tenantId: ID!, $planId: ID) {
+    publicPricingPackages(tenantId: $tenantId, planId: $planId) {
       id
       name
       tagline
@@ -67,6 +71,7 @@ export const GET_PRICING_PLANS = `
       previousPlan
       cta
       ctaVariant
+      freeTierLimit
     }
   }
 `
@@ -97,6 +102,7 @@ export const GET_PUBLIC_PLANS = `
         previousPlan
         cta
         ctaVariant
+        freeTierLimit
       }
     }
   }
@@ -109,9 +115,10 @@ export interface PublicPlan {
   packages: import('./pricing-data').Plan[];
 }
 
+// Same category scoping as GET_PRICING_PLANS -- see comment above.
 export const GET_FEATURE_COMPARISON = `
-  query GetFeatureComparison($tenantId: ID!) {
-    publicFeatureComparison(tenantId: $tenantId) {
+  query GetFeatureComparison($tenantId: ID!, $planId: ID) {
+    publicFeatureComparison(tenantId: $tenantId, planId: $planId) {
       id
       name
       features {
@@ -193,13 +200,17 @@ export interface PublicFeature {
 
 // Subscribe to a pre-built Package (the "Start free trial" flow).
 // Called once, right after Wellonge ID registration + payment succeed.
+// promoCode is optional -- the backend only honors it on ANNUAL billing
+// (PromoCode's fixed rule) and re-validates it server-side regardless of
+// what validatePromoCode already said client-side.
 export const REGISTER_SUBSCRIPTION = `
-  mutation RegisterSubscription($tenantId: ID!, $packageId: ID!, $ownerWalletId: ID, $billingCycle: String!) {
+  mutation RegisterSubscription($tenantId: ID!, $packageId: ID!, $ownerWalletId: ID, $billingCycle: String!, $promoCode: String) {
     registerSubscription(
       tenantId: $tenantId
       packageId: $packageId
       ownerWalletId: $ownerWalletId
       billingCycle: $billingCycle
+      promoCode: $promoCode
     ) {
       subscriptionId
       packageId
@@ -211,6 +222,31 @@ export const REGISTER_SUBSCRIPTION = `
     }
   }
 `;
+
+// Checks a promo code against one package + billing cycle without
+// consuming a use -- PromoCode is annual-only by fixed rule, so this is
+// only meaningful when the caller has selected annual billing.
+export const VALIDATE_PROMO_CODE = `
+  query ValidatePromoCode($tenantId: ID!, $code: String!, $packageId: ID!, $billingCycle: String!) {
+    validatePromoCode(tenantId: $tenantId, code: $code, packageId: $packageId, billingCycle: $billingCycle) {
+      valid
+      message
+      discountPercentage
+      disablesFreeTrial
+      effectiveAnnualPrice
+      currency
+    }
+  }
+`;
+
+export interface PromoCodeValidationResult {
+  valid: boolean;
+  message: string;
+  discountPercentage: number;
+  disablesFreeTrial: boolean;
+  effectiveAnnualPrice: number;
+  currency: string;
+}
 
 // "Build your own plan" flow: instantiates a new Package with exactly the
 // picked Sub-Features/Add-ons enabled, then subscribes to it.

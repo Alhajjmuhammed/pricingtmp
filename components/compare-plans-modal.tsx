@@ -153,9 +153,16 @@ function CategorySection({
 export function ComparePlansModal({
   open,
   onOpenChange,
+  planId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  // Business-line category (Buyer / Tax Compliance / Supplier) currently
+  // being browsed on the pricing page -- without this, both queries below
+  // return every category's packages pooled together, so e.g. Buyer's
+  // Starter and Tax Compliance's Starter show up as separate columns with
+  // different prices under the same plan name.
+  planId?: string
 }) {
   const close = useCallback(() => onOpenChange(false), [onOpenChange])
   const [featureComparison, setFeatureComparison] = useState<FeatureCategory[]>([])
@@ -167,14 +174,14 @@ export function ComparePlansModal({
     if (open) {
       fetchData()
     }
-  }, [open])
+  }, [open, planId])
 
   const fetchData = async () => {
     setLoading(true)
     try {
       const [comparisonData, plansData] = await Promise.all([
-        billingGraphqlRequest<any>(GET_FEATURE_COMPARISON),
-        billingGraphqlRequest<any>(GET_PRICING_PLANS)
+        billingGraphqlRequest<any>(GET_FEATURE_COMPARISON, { planId }),
+        billingGraphqlRequest<any>(GET_PRICING_PLANS, { planId })
       ])
 
       if (comparisonData?.publicFeatureComparison && plansData?.publicPricingPackages) {
@@ -327,7 +334,7 @@ export function ComparePlansModal({
 }
 
 /* ---------- Compare plans trigger button ---------- */
-export function ComparePlansButton() {
+export function ComparePlansButton({ planId }: { planId?: string } = {}) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -366,7 +373,7 @@ export function ComparePlansButton() {
         </div>
       </section>
 
-      <ComparePlansModal open={open} onOpenChange={setOpen} />
+      <ComparePlansModal open={open} onOpenChange={setOpen} planId={planId} />
     </>
   )
 }

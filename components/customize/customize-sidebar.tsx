@@ -1,8 +1,10 @@
 "use client"
 
-import { Minus, Plus, Languages, Coins, Users, Boxes, Building2, HardDrive } from "lucide-react"
+import { Minus, Plus, Coins, Users, Boxes, Building2, HardDrive, Loader2, Landmark, ShoppingCart, Truck, Layers } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggleInline } from "@/components/theme-toggle"
+import { BrandLogo } from "@/components/brand-logo"
+import type { PublicPlan } from "@/lib/graphql-client"
 import {
   UNIT_PRICES,
   ASSET_STEPS,
@@ -12,6 +14,17 @@ import {
   type Counts,
   type ScaleKey,
 } from "@/lib/customize-data"
+
+// Categories are admin-managed Plans from the billing API (name/description
+// are free text) -- this only picks a matching icon by keyword, it never
+// hides or invents a category that isn't actually there.
+function CategoryToggleIcon({ name }: { name: string }) {
+  const lower = name.toLowerCase()
+  if (lower.includes("tax")) return <Landmark className="h-3.5 w-3.5" />
+  if (lower.includes("buyer")) return <ShoppingCart className="h-3.5 w-3.5" />
+  if (lower.includes("supplier")) return <Truck className="h-3.5 w-3.5" />
+  return <Layers className="h-3.5 w-3.5" />
+}
 
 function Counter({
   label,
@@ -77,6 +90,11 @@ export function CustomizeSidebar({
   setLang,
   currency,
   setCurrency,
+  categories,
+  activeCategoryIds,
+  onToggleCategory,
+  categoriesLoading,
+  categoriesError,
 }: {
   activeModules: Record<string, boolean>
   setActiveModules: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
@@ -86,6 +104,11 @@ export function CustomizeSidebar({
   setLang: (l: LangKey) => void
   currency: string
   setCurrency: (c: string) => void
+  categories: PublicPlan[]
+  activeCategoryIds: Record<string, boolean>
+  onToggleCategory: (id: string) => void
+  categoriesLoading: boolean
+  categoriesError: string | null
 }) {
   const t = TRANSLATIONS[lang]
   const cur = CURRENCIES[currency]
@@ -99,19 +122,63 @@ export function CustomizeSidebar({
   return (
     <div className="flex flex-col h-full overflow-y-auto pr-2 scrollbar-hide">
       {/* Logo */}
-      <div className="flex items-center gap-3 mb-10 px-2">
-        <div className="w-10 h-10 bg-gradient-to-br from-primary to-primary/70 rounded-xl flex items-center justify-center shadow-lg shadow-primary/25">
-          <span className="text-primary-foreground font-black text-xl italic leading-none">e</span>
-        </div>
-        <div className="leading-tight">
-          <span className="font-bold text-lg block text-foreground tracking-tight">eOpsEntre</span>
-          <span className="text-[8px] text-primary uppercase font-bold tracking-widest">Digital Ops</span>
-        </div>
+      <div className="mb-10 px-2">
+        <BrandLogo />
       </div>
 
       <div className="mb-8 px-2 space-y-6">
-        {/* Plan Scale */}
+        {/* Categories — toggle on/off to mix their modules into one plan
+            (e.g. Tax Compliance + Buyer). */}
         <div className="pt-0 border-t-0 border-border">
+          <h3 className="text-[10px] font-bold text-muted-foreground uppercase mb-4 tracking-widest">
+            Categories
+          </h3>
+          {categoriesLoading ? (
+            <div className="flex items-center justify-center py-3">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          ) : categoriesError ? (
+            <p className="text-[10px] text-destructive">{categoriesError}</p>
+          ) : (
+            <div className="space-y-2">
+              {categories.map((cat) => {
+                const isOn = !!activeCategoryIds[cat.id]
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => onToggleCategory(cat.id)}
+                    aria-pressed={isOn}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-xl border p-3 transition-colors",
+                      isOn ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "flex items-center gap-2 text-xs font-semibold",
+                        isOn ? "text-primary" : "text-foreground"
+                      )}
+                    >
+                      <CategoryToggleIcon name={cat.name} />
+                      {cat.name}
+                    </span>
+                    <span
+                      className={cn(
+                        "flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors",
+                        isOn ? "bg-primary justify-end" : "bg-border justify-start"
+                      )}
+                    >
+                      <span className="h-3 w-3 rounded-full bg-white shadow-sm" />
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Plan Scale */}
+        <div className="pt-6 border-t border-border">
           <h3 className="text-[10px] font-bold text-muted-foreground uppercase mb-4 tracking-widest">
             {t.scale}
           </h3>
@@ -162,27 +229,6 @@ export function CustomizeSidebar({
           <h3 className="text-[10px] font-bold text-muted-foreground uppercase mb-4 tracking-widest">
             {t.prefs}
           </h3>
-
-          {/* Language */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[10px] font-bold text-muted-foreground uppercase">
-              <Languages className="h-3 w-3" /> {t.language}
-            </div>
-            <div className="flex gap-1 bg-secondary/50 p-1 rounded-xl border border-border">
-              {(["en", "es", "fr"] as LangKey[]).map((l) => (
-                <button
-                  key={l}
-                  onClick={() => setLang(l)}
-                  className={cn(
-                    "flex-1 py-1.5 text-[10px] font-bold uppercase rounded-lg transition-all",
-                    lang === l ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
-                  )}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Currency */}
           <div className="space-y-2">
