@@ -1144,9 +1144,121 @@ export default function RegisterPage() {
         console.warn('⚠️ Could not save payment method (non-blocking):', paymentSaveError?.message)
       }
 
-      // Step 4: Create the real subscription in the billing engine.
+      // Custom (build-your-own) plans have no moduleNames from selected_plan
+      // -- derive them from services/selectedServices before either of the
+      // two provisioning steps below need them.
+      if (!selectedPackageId) {
+        purchasedModuleNames = services
+          .filter((s: any) => selectedServices.includes(s.id))
+          .map((s: any) => s.name)
+      }
+
+      // Human-readable purchase summary for clientmng admins (clientall.
+      // eopsprimax.com) -- its own ServiceCategory/Feature catalog uses
+      // different IDs than wellongepay's, so this free-text summary is
+      // what makes the purchase visible there at all.
+      const purchasePrice = selectedPackageId
+        ? (promoResult?.valid ? promoResult.effectiveAnnualPrice : selectedPlan?.price ?? null)
+        : calculateTotal()
+      const purchaseSummary = `Purchased: ${selectedCategoryNames.length > 0 ? selectedCategoryNames.join(' + ') : 'Custom'} - ${selectedPackageName || 'Custom Plan'}` +
+        (purchasePrice != null ? ` ($${Number(purchasePrice).toFixed(2)}/${resolvedBillingPeriod === 'yearly' ? 'yr' : 'mo'})` : '') +
+        (purchasedModuleNames.length > 0 ? ` - Modules: ${purchasedModuleNames.join(', ')}` : '')
+
+      // Step 4: Provision the account in the actual product(s) they
+      // subscribed to (Tax Compliance / Buyer / Supplier), based on the
+      // category(ies) chosen on the pricing page or toggled on together on
+      // /customize. Retried, non-blocking. Custom-plan registrations with
+      // no category skip this — there's no destination system to
+      // provision. The first destination system to successfully return a
+      // token becomes the one the success page auto-logs the user into —
+      // a customer can only land on one dashboard immediately after
+      // registering, even if their plan spans more than one product.
+      //
+      // Runs BEFORE both the subscription (next step) and Client User
+      // Management (after that) -- two reasons: (1) destinationUserId
+      // needs to be known in time to pass to Client User Management, and
+      // (2) Wellongepay's registerSubscription immediately pushes a
+      // one-shot, non-retried sync webhook to whichever destination
+      // product the plan belongs to (Firm.package_details' real feature/
+      // limit data comes from this push, not the hardcoded fallback it
+      // silently falls back to otherwise). That push resolves the target
+      // firm by looking up a User whose wellonge_id matches this
+      // registration -- which doesn't exist yet if the subscription is
+      // created before this step runs. Confirmed via a live end-to-end
+      // registration test: with the old order, every sync silently
+      // no-opped ("status": "ignored") because the receiving side had
+      // nothing to match against yet.
+      const destinationSystems = Array.from(
+        new Set(
+          selectedCategoryNames
+            .map((name) => resolveDestinationSystem(name))
+            .filter((s): s is NonNullable<ReturnType<typeof resolveDestinationSystem>> => !!s)
+        )
+      )
+
+      if (destinationSystems.includes('tax_compliance')) {
+        console.log('📝 Step 4: Registering with Tax Compliance platform...')
+        try {
+          const tcResult = await withRetry(() => registerWithTaxCompliance({
+            orgName,
+            industry,
+            orgSize,
+            country,
+            email,
+            password,
+            firstName,
+            lastName,
+            planName: selectedPackageName || 'standard',
+            purchasedModules: mapToTaxComplianceModules(purchasedModuleNames),
+          }))
+          provisioningResults.taxCompliancePlatform = true
+          if (!destinationAccessToken) {
+            destinationAccessToken = tcResult?.accessToken || null
+            destinationRefreshToken = tcResult?.refreshToken || null
+            primaryDestinationSystem = 'tax_compliance'
+            destinationUserId = tcResult?.user?.id || null
+          }
+          console.log('✅ Registered with Tax Compliance platform:', tcResult?.message)
+        } catch (tcErr: any) {
+          console.warn('⚠️ Could not register with Tax Compliance platform (non-blocking):', tcErr?.message)
+        }
+      }
+
+      for (const destinationSystem of destinationSystems) {
+        if (destinationSystem !== 'buyer' && destinationSystem !== 'supplier') continue
+        console.log(`📝 Step 4: Registering with Supplier Connect platform (${destinationSystem})...`)
+        try {
+          const spResult = await withRetry(() => registerWithSupplierPlatform({
+            orgName,
+            orgSlug,
+            country,
+            email,
+            password,
+            firstName,
+            lastName,
+            orgType: destinationSystem,
+            planName: selectedPackageName || 'standard',
+            purchasedModules: mapToSupplierPlatformModules(purchasedModuleNames),
+          }))
+          provisioningResults.supplierConnectPlatform = true
+          if (!destinationAccessToken) {
+            destinationAccessToken = spResult?.accessToken || null
+            destinationRefreshToken = spResult?.refreshToken || null
+            primaryDestinationSystem = destinationSystem
+            destinationUserId = spResult?.user?.id || null
+          }
+          console.log('✅ Registered with Supplier Connect platform:', spResult?.user?.id)
+        } catch (spErr: any) {
+          console.warn('⚠️ Could not register with Supplier Connect platform (non-blocking):', spErr?.message)
+        }
+      }
+
+      // Step 4.5: Create the real subscription in the billing engine.
       // Retried, non-blocking -- the account/profile/org already exist.
-      console.log('📝 Step 4: Creating subscription...')
+      // Runs AFTER destination-system provisioning above -- see that
+      // step's comment for why the order matters (the subscription sync
+      // push needs the destination account to already exist).
+      console.log('📝 Step 4.5: Creating subscription...')
       const billingCycleUpper = resolvedBillingPeriod === 'yearly' ? 'ANNUAL' : 'MONTHLY'
       try {
         await withRetry(async () => {
@@ -1207,102 +1319,6 @@ export default function RegisterPage() {
         // Non-blocking — the account, org, and payment method are already
         // created; a missing subscription can be created by support later.
         console.warn('⚠️ Could not create subscription (non-blocking):', subErr?.message)
-      }
-
-      // Custom (build-your-own) plans have no moduleNames from selected_plan
-      // -- derive them from the same services/selectedServices state Step 4
-      // just used to build the subscription's Sub-Feature selections.
-      if (!selectedPackageId) {
-        purchasedModuleNames = services
-          .filter((s: any) => selectedServices.includes(s.id))
-          .map((s: any) => s.name)
-      }
-
-      // Human-readable purchase summary for clientmng admins (clientall.
-      // eopsprimax.com) -- its own ServiceCategory/Feature catalog uses
-      // different IDs than wellongepay's, so this free-text summary is
-      // what makes the purchase visible there at all.
-      const purchasePrice = selectedPackageId
-        ? (promoResult?.valid ? promoResult.effectiveAnnualPrice : selectedPlan?.price ?? null)
-        : calculateTotal()
-      const purchaseSummary = `Purchased: ${selectedCategoryNames.length > 0 ? selectedCategoryNames.join(' + ') : 'Custom'} - ${selectedPackageName || 'Custom Plan'}` +
-        (purchasePrice != null ? ` ($${Number(purchasePrice).toFixed(2)}/${resolvedBillingPeriod === 'yearly' ? 'yr' : 'mo'})` : '') +
-        (purchasedModuleNames.length > 0 ? ` - Modules: ${purchasedModuleNames.join(', ')}` : '')
-
-      // Step 4.5: Provision the account in the actual product(s) they
-      // subscribed to (Tax Compliance / Buyer / Supplier), based on the
-      // category(ies) chosen on the pricing page or toggled on together on
-      // /customize. Retried, non-blocking. Custom-plan registrations with
-      // no category skip this — there's no destination system to
-      // provision. The first destination system to successfully return a
-      // token becomes the one the success page auto-logs the user into —
-      // a customer can only land on one dashboard immediately after
-      // registering, even if their plan spans more than one product.
-      // Runs BEFORE Client User Management (next step) specifically so its
-      // user id is known in time to pass along — see destinationUserId.
-      const destinationSystems = Array.from(
-        new Set(
-          selectedCategoryNames
-            .map((name) => resolveDestinationSystem(name))
-            .filter((s): s is NonNullable<ReturnType<typeof resolveDestinationSystem>> => !!s)
-        )
-      )
-
-      if (destinationSystems.includes('tax_compliance')) {
-        console.log('📝 Step 4.5: Registering with Tax Compliance platform...')
-        try {
-          const tcResult = await withRetry(() => registerWithTaxCompliance({
-            orgName,
-            industry,
-            orgSize,
-            country,
-            email,
-            password,
-            firstName,
-            lastName,
-            planName: selectedPackageName || 'standard',
-            purchasedModules: mapToTaxComplianceModules(purchasedModuleNames),
-          }))
-          provisioningResults.taxCompliancePlatform = true
-          if (!destinationAccessToken) {
-            destinationAccessToken = tcResult?.accessToken || null
-            destinationRefreshToken = tcResult?.refreshToken || null
-            primaryDestinationSystem = 'tax_compliance'
-            destinationUserId = tcResult?.user?.id || null
-          }
-          console.log('✅ Registered with Tax Compliance platform:', tcResult?.message)
-        } catch (tcErr: any) {
-          console.warn('⚠️ Could not register with Tax Compliance platform (non-blocking):', tcErr?.message)
-        }
-      }
-
-      for (const destinationSystem of destinationSystems) {
-        if (destinationSystem !== 'buyer' && destinationSystem !== 'supplier') continue
-        console.log(`📝 Step 4.5: Registering with Supplier Connect platform (${destinationSystem})...`)
-        try {
-          const spResult = await withRetry(() => registerWithSupplierPlatform({
-            orgName,
-            orgSlug,
-            country,
-            email,
-            password,
-            firstName,
-            lastName,
-            orgType: destinationSystem,
-            planName: selectedPackageName || 'standard',
-            purchasedModules: mapToSupplierPlatformModules(purchasedModuleNames),
-          }))
-          provisioningResults.supplierConnectPlatform = true
-          if (!destinationAccessToken) {
-            destinationAccessToken = spResult?.accessToken || null
-            destinationRefreshToken = spResult?.refreshToken || null
-            primaryDestinationSystem = destinationSystem
-            destinationUserId = spResult?.user?.id || null
-          }
-          console.log('✅ Registered with Supplier Connect platform:', spResult?.user?.id)
-        } catch (spErr: any) {
-          console.warn('⚠️ Could not register with Supplier Connect platform (non-blocking):', spErr?.message)
-        }
       }
 
       // Step 4.6: Register in Client User Management (clientmng) — every
