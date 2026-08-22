@@ -19,8 +19,11 @@
  * across every system (confirmed direction, not a guess).
  */
 
-const CLIENT_MGMT_GRAPHQL_URL =
-  process.env.NEXT_PUBLIC_CLIENT_MGMT_GRAPHQL_URL || 'https://backclientall.eopsprimax.com/graphql/';
+// Routed through this app's own server (see app/api/client-mgmt-proxy/route.ts)
+// instead of calling the backend directly -- that backend now requires a
+// shared secret that must never be embedded in this public, unauthenticated
+// registration page's client-side bundle.
+const CLIENT_MGMT_GRAPHQL_URL = '/api/client-mgmt-proxy';
 const TAX_COMPLIANCE_GRAPHQL_URL =
   process.env.NEXT_PUBLIC_TAX_COMPLIANCE_GRAPHQL_URL || 'https://backtaxcomply.eopsprimax.com/graphql/';
 const SUPPLIER_GRAPHQL_URL =
