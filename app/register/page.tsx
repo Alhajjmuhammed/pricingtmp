@@ -82,49 +82,6 @@ function validatePasswordStrength(password: string): string | null {
   return null
 }
 
-function detectCardType(number: string): "visa" | "mastercard" | "amex" | "discover" | null {
-  const raw = number.replace(/\s/g, "")
-  if (/^4/.test(raw)) return "visa"
-  if (/^(5[1-5]|2[2-7])/.test(raw)) return "mastercard"
-  if (/^3[47]/.test(raw)) return "amex"
-  if (/^(6011|65|64[4-9]|622)/.test(raw)) return "discover"
-  return null
-}
-
-function CardBrandIcon({ type }: { type: "visa" | "mastercard" | "amex" | "discover" | null }) {
-  if (!type) return null
-  const logos: Record<string, React.ReactNode> = {
-    visa: (
-      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Visa">
-        <rect width="38" height="24" rx="3" fill="#1A1F71" />
-        <text x="6" y="17" fontFamily="Arial" fontWeight="bold" fontSize="13" fill="white" letterSpacing="0">VISA</text>
-      </svg>
-    ),
-    mastercard: (
-      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Mastercard">
-        <rect width="38" height="24" rx="3" fill="#252525" />
-        <circle cx="14" cy="12" r="7" fill="#EB001B" />
-        <circle cx="24" cy="12" r="7" fill="#F79E1B" />
-        <path d="M19 7.2a7 7 0 0 1 0 9.6A7 7 0 0 1 19 7.2z" fill="#FF5F00" />
-      </svg>
-    ),
-    amex: (
-      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Amex">
-        <rect width="38" height="24" rx="3" fill="#2E77BC" />
-        <text x="4" y="17" fontFamily="Arial" fontWeight="bold" fontSize="10" fill="white">AMEX</text>
-      </svg>
-    ),
-    discover: (
-      <svg viewBox="0 0 38 24" width="38" height="24" aria-label="Discover">
-        <rect width="38" height="24" rx="3" fill="#FFFFFF" stroke="#E6E6E6" strokeWidth="1" />
-        <text x="3" y="16" fontFamily="Arial" fontWeight="bold" fontSize="8" fill="#231F20">DISCOVER</text>
-        <circle cx="29" cy="12" r="6" fill="#F76F20" />
-      </svg>
-    ),
-  }
-  return <>{logos[type]}</>
-}
-
 function CountryPicker({
   value,
   onChange,
@@ -380,9 +337,6 @@ export default function RegisterPage() {
 
   // Billing information (step 3)
   const [billingName, setBillingName] = useState("")
-  const [cardNumber, setCardNumber] = useState("")
-  const [cardExpiry, setCardExpiry] = useState("")
-  const [cardCvv, setCardCvv] = useState("")
   const [billingAddress, setBillingAddress] = useState("")
   const [billingCity, setBillingCity] = useState("")
   const [billingCountry, setBillingCountry] = useState("")
@@ -861,24 +815,8 @@ export default function RegisterPage() {
   const handleBillingSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!billingName || !cardNumber || !cardExpiry || !cardCvv || !billingAddress || !billingCity || !billingCountry) {
+    if (!billingName || !billingAddress || !billingCity || !billingCountry) {
       setError("Please fill in all billing fields")
-      return
-    }
-
-    const rawCard = cardNumber.replace(/\s/g, "")
-    const cardBrand = detectCardType(cardNumber)
-    const cardLast4 = rawCard.slice(-4)
-    if (rawCard.length < 15 || rawCard.length > 16) {
-      setError("Please enter a valid card number")
-      return
-    }
-    if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) {
-      setError("Please enter expiry in MM/YY format")
-      return
-    }
-    if (cardCvv.length < 3) {
-      setError("Please enter a valid CVV")
       return
     }
 
@@ -886,66 +824,15 @@ export default function RegisterPage() {
     setError("")
 
     try {
-      // STEP 0: Verify NBC Card BEFORE registration
-      console.log('🔐 [NBC] Verifying card before registration...')
-      
-      const [expiryMonth, expiryYear] = cardExpiry.split('/')
-      const verificationPayload = {
-        card_number: rawCard,
-        card_holder: billingName,
-        expiry_month: expiryMonth,
-        expiry_year: expiryYear,
-        cvv: cardCvv
-      }
-      
-      let nbcCardToken = ''
-      let nbcOrderReference = ''
-      
-      try {
-        const verifyResponse = await fetch(process.env.NEXT_PUBLIC_NBC_VERIFY_CARD_URL || 'http://localhost:8000/api/payments/ngenius/verify-card/', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(verificationPayload)
-        })
-        
-        const verifyResult = await verifyResponse.json()
-        
-        console.log('[NBC] Verification result:', {
-          valid: verifyResult.valid,
-          sufficient_balance: verifyResult.sufficient_balance,
-          message: verifyResult.message
-        })
-        
-        // Check card validity
-        if (!verifyResult.valid) {
-          setError("Invalid card. Please check your card details and try again.")
-          setLoading(false)
-          return
-        }
-        
-        // Check balance
-        if (!verifyResult.sufficient_balance) {
-          setError("Insufficient balance. Please add at least $5 to your card and try again.")
-          setLoading(false)
-          return
-        }
-        
-        // Capture NBC token for later use
-        nbcCardToken = verifyResult.card_token || ''
-        nbcOrderReference = verifyResult.order_reference || ''
-        
-        // Card verified successfully
-        console.log('✅ [NBC] Card verified successfully, token captured:', nbcCardToken ? 'YES' : 'NO')
-        
-      } catch (verifyError: any) {
-        console.error('❌ [NBC] Card verification failed:', verifyError)
-        setError("Card verification failed. Please check your card details and try again.")
-        setLoading(false)
-        return
-      }
-
+      // Card details are no longer collected or verified here at all --
+      // the first real payment happens later, safely, through the
+      // hosted-page invoice-payment flow (a separate, already-working
+      // path). This step used to send raw card number/CVV directly to
+      // our own server (a PCI-DSS high-risk pattern) to verify a card
+      // that (a) currently blocks every real signup -- the merchant
+      // outlet isn't configured for real cards yet -- and (b) was never
+      // actually used afterward: recurring billing here means
+      // "generate an invoice and notify", not "auto-charge a saved card".
       console.log('🔵 [Register] Creating account with all collected data...')
 
       // Determine registration source based on selected plan type
@@ -1104,45 +991,6 @@ export default function RegisterPage() {
       const orgId = orgResponse.data.id
       provisioningResults.wellongeIdOrganization = true
       console.log('✅ Organization created, ID:', orgId)
-
-      // Step 3.5: Save Payment Method to Wellongepay
-      console.log('📝 Step 3.5: Saving payment method to Wellongepay...')
-      try {
-        const savePaymentMethodPayload = {
-          personal_account_id: newAccountId,
-          card_number: rawCard,
-          card_holder: billingName,
-          expiry_month: expiryMonth,
-          expiry_year: expiryYear,
-          cvv: cardCvv,
-          card_brand: cardBrand || 'unknown',
-          billing_address: billingAddress,
-          billing_city: billingCity,
-          billing_country: billingCountry,
-          billing_postal_code: '',
-          nbc_card_token: nbcCardToken,
-          nbc_order_reference: nbcOrderReference
-        }
-
-        const savePaymentResponse = await fetch(process.env.NEXT_PUBLIC_NBC_SAVE_PAYMENT_URL || 'http://localhost:8000/api/payments/ngenius/save-payment-method/', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(savePaymentMethodPayload)
-        })
-
-        const savePaymentResult = await savePaymentResponse.json()
-
-        if (savePaymentResult.success) {
-          console.log('✅ Payment method saved, ID:', savePaymentResult.payment_method_id, 'Wallet ID:', savePaymentResult.wallet_id)
-        } else {
-          console.warn('⚠️ Payment method save failed (non-blocking):', savePaymentResult.message)
-        }
-      } catch (paymentSaveError: any) {
-        // Non-blocking - account already created
-        console.warn('⚠️ Could not save payment method (non-blocking):', paymentSaveError?.message)
-      }
 
       // Custom (build-your-own) plans have no moduleNames from selected_plan
       // -- derive them from services/selectedServices before either of the
@@ -1413,9 +1261,6 @@ export default function RegisterPage() {
           billingAddress,
           billingCity,
           billingCountry,
-          cardBrand: cardBrand || undefined,
-          cardLast4,
-          cardExpiry,
         },
       }))
       router.push('/success')
@@ -3150,16 +2995,16 @@ export default function RegisterPage() {
               <div className="grid md:grid-cols-2 gap-8">
                 {/* Left: Card Details */}
                 <div className="space-y-5">
-                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide border-b pb-2">Card Details</h4>
+                  <h4 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide border-b pb-2">Billing Details</h4>
 
-                  {/* Cardholder Name */}
+                  {/* Billing Name */}
                   <div className="space-y-2">
-                    <Label htmlFor="billingName">Cardholder Name</Label>
+                    <Label htmlFor="billingName">Full Name</Label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="billingName"
-                        placeholder="Name as on card"
+                        placeholder="Full name for billing"
                         value={billingName}
                         onChange={(e) => setBillingName(e.target.value)}
                         className="pl-10"
@@ -3168,75 +3013,6 @@ export default function RegisterPage() {
                     </div>
                   </div>
 
-                  {/* Card Number */}
-                  <div className="space-y-2">
-                    <Label htmlFor="cardNumber">Card Number</Label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="cardNumber"
-                        placeholder="1234 5678 9012 3456"
-                        value={cardNumber}
-                        onChange={(e) => {
-                          const raw = e.target.value.replace(/\D/g, "").slice(0, 16)
-                          const formatted = raw.replace(/(.{4})/g, "$1 ").trim()
-                          setCardNumber(formatted)
-                        }}
-                        className="pl-10 pr-14 tracking-widest"
-                        maxLength={19}
-                        required
-                      />
-                      {detectCardType(cardNumber) && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <CardBrandIcon type={detectCardType(cardNumber)} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Expiry + CVV */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="cardExpiry">Expiry Date</Label>
-                      <div className="relative">
-                        <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          id="cardExpiry"
-                          placeholder="MM/YY"
-                          value={cardExpiry}
-                          onChange={(e) => {
-                            let v = e.target.value.replace(/\D/g, "").slice(0, 4)
-                            if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2)
-                            setCardExpiry(v)
-                          }}
-                          className="pl-10"
-                          maxLength={5}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cardCvv">CVV</Label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          id="cardCvv"
-                          placeholder="123"
-                          value={cardCvv}
-                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                          className="pl-10"
-                          maxLength={4}
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Accepted cards notice */}
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-md px-3 py-2">
-                    <Lock className="h-3.5 w-3.5 flex-shrink-0" />
-                    <span>We accept Visa, Mastercard, and American Express. Card details are never stored on our servers.</span>
-                  </div>
                 </div>
 
                 {/* Right: Billing Address + Order Summary */}
