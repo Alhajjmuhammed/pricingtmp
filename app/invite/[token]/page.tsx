@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
-import { Loader2, Lock, Phone, DollarSign, Calendar, CheckCircle2, Package } from "lucide-react"
+import { Loader2, Lock, Phone, DollarSign, CheckCircle2, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -56,15 +56,6 @@ const COUNTRIES = [
   { iso: "gb", name: "UK" },
 ]
 
-function detectCardType(number: string): string | null {
-  const raw = number.replace(/\s/g, "")
-  if (/^4/.test(raw)) return "visa"
-  if (/^(5[1-5]|2[2-7])/.test(raw)) return "mastercard"
-  if (/^3[47]/.test(raw)) return "amex"
-  if (/^(6011|65|64[4-9]|622)/.test(raw)) return "discover"
-  return null
-}
-
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -95,9 +86,6 @@ export default function InvitePage() {
   const [country, setCountry] = useState("tz")
 
   const [billingName, setBillingName] = useState("")
-  const [cardNumber, setCardNumber] = useState("")
-  const [cardExpiry, setCardExpiry] = useState("")
-  const [cardCvv, setCardCvv] = useState("")
   const [billingAddress, setBillingAddress] = useState("")
   const [billingCity, setBillingCity] = useState("")
   const [billingCountry, setBillingCountry] = useState("tz")
@@ -146,19 +134,6 @@ export default function InvitePage() {
       setError("Passwords do not match")
       return
     }
-    const rawCard = cardNumber.replace(/\s/g, "")
-    if (!billingName || rawCard.length < 15 || rawCard.length > 16) {
-      setError("Please enter a valid card number")
-      return
-    }
-    if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) {
-      setError("Please enter a valid expiry date (MM/YY)")
-      return
-    }
-    if (cardCvv.length < 3) {
-      setError("Please enter a valid CVV")
-      return
-    }
     if (!billingAddress || !billingCity) {
       setError("Please complete your billing address")
       return
@@ -166,44 +141,14 @@ export default function InvitePage() {
 
     setSubmitting(true)
     try {
-      // Step 0: verify the card before creating any accounts
-      const [expiryMonth, expiryYear] = cardExpiry.split("/")
-      let nbcCardToken = ""
-      let nbcOrderReference = ""
-      try {
-        const verifyResponse = await fetch(
-          process.env.NEXT_PUBLIC_NBC_VERIFY_CARD_URL || "http://localhost:8000/api/payments/ngenius/verify-card/",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              card_number: rawCard,
-              card_holder: billingName,
-              expiry_month: expiryMonth,
-              expiry_year: expiryYear,
-              cvv: cardCvv,
-            }),
-          }
-        )
-        const verifyResult = await verifyResponse.json()
-        if (!verifyResult.valid) {
-          setError("Invalid card. Please check your card details and try again.")
-          setSubmitting(false)
-          return
-        }
-        if (!verifyResult.sufficient_balance) {
-          setError("Insufficient balance. Please add at least $5 to your card and try again.")
-          setSubmitting(false)
-          return
-        }
-        nbcCardToken = verifyResult.card_token || ""
-        nbcOrderReference = verifyResult.order_reference || ""
-      } catch {
-        setError("Card verification failed. Please check your card details and try again.")
-        setSubmitting(false)
-        return
-      }
-
+      // Card details are no longer collected or verified here at all --
+      // the first real payment happens later, safely, through the
+      // hosted-page invoice-payment flow. This step used to send raw
+      // card number/CVV directly to our own server (a PCI-DSS high-risk
+      // pattern) to verify a card that (a) currently blocks every real
+      // signup, and (b) was never actually used afterward -- recurring
+      // billing means "generate an invoice and notify", not "auto-charge
+      // a saved card".
       // Step 1: create the Wellonge ID account using the prefilled identity
       const accountResponse = await registerPersonalAccount({
         email: details.primaryEmail,
@@ -274,36 +219,6 @@ export default function InvitePage() {
       }
       const orgId = orgResponse.data.id
       provisioningResults.wellongeIdOrganization = true
-
-      // Step 3.5: save payment method (non-blocking)
-      try {
-        const savePaymentResponse = await fetch(
-          process.env.NEXT_PUBLIC_NBC_SAVE_PAYMENT_URL || "http://localhost:8000/api/payments/ngenius/save-payment-method/",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              personal_account_id: newAccountId,
-              card_number: rawCard,
-              card_holder: billingName,
-              expiry_month: expiryMonth,
-              expiry_year: expiryYear,
-              cvv: cardCvv,
-              card_brand: detectCardType(cardNumber) || "unknown",
-              billing_address: billingAddress,
-              billing_city: billingCity,
-              billing_country: COUNTRIES.find((c) => c.iso === billingCountry)?.name || billingCountry,
-              billing_postal_code: "",
-              nbc_card_token: nbcCardToken,
-              nbc_order_reference: nbcOrderReference,
-            }),
-          }
-        )
-        const savePaymentResult = await savePaymentResponse.json()
-        if (savePaymentResult.success) provisioningResults.paymentMethodSaved = true
-      } catch {
-        // non-blocking
-      }
 
       // Step 4: create the real wellongepay subscription -- subFeatureId/
       // addonId here are already real wellongepay catalog IDs (the admin's
@@ -438,9 +353,6 @@ export default function InvitePage() {
             billingAddress,
             billingCity,
             billingCountry,
-            cardBrand: detectCardType(cardNumber) || undefined,
-            cardLast4: rawCard.slice(-4),
-            cardExpiry,
           },
         })
       )
@@ -592,56 +504,8 @@ export default function InvitePage() {
               </h2>
 
               <div className="space-y-2">
-                <Label htmlFor="billingName">Cardholder name</Label>
+                <Label htmlFor="billingName">Full name</Label>
                 <Input id="billingName" value={billingName} onChange={(e) => setBillingName(e.target.value)} required />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="cardNumber">Card number</Label>
-                <Input
-                  id="cardNumber"
-                  placeholder="1234 5678 9012 3456"
-                  value={cardNumber}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/\D/g, "").slice(0, 16)
-                    setCardNumber(raw.replace(/(.{4})/g, "$1 ").trim())
-                  }}
-                  maxLength={19}
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="cardExpiry">Expiry date</Label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="cardExpiry"
-                      placeholder="MM/YY"
-                      value={cardExpiry}
-                      onChange={(e) => {
-                        let v = e.target.value.replace(/\D/g, "").slice(0, 4)
-                        if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2)
-                        setCardExpiry(v)
-                      }}
-                      className="pl-10"
-                      maxLength={5}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cardCvv">CVV</Label>
-                  <Input
-                    id="cardCvv"
-                    placeholder="123"
-                    value={cardCvv}
-                    onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                    maxLength={4}
-                    required
-                  />
-                </div>
               </div>
 
               <div className="space-y-2">
